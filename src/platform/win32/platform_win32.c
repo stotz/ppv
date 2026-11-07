@@ -46,6 +46,17 @@ bool ppv_interrupted(void)
     return InterlockedCompareExchange(&g_interrupted, 0, 0) != 0;
 }
 
+int ppv_interrupt_exit_code(void)
+{
+    return 130; /* 128 + SIGINT, as on POSIX */
+}
+
+void ppv_exit_interrupted(void)
+{
+    fflush(NULL);
+    _Exit(ppv_interrupt_exit_code());
+}
+
 uint64_t ppv_now_ns(void)
 {
     LARGE_INTEGER c;
@@ -109,6 +120,16 @@ bool ppv_stderr_is_tty(void)
 bool ppv_stderr_in_foreground(void)
 {
     return true; /* no job control on Windows */
+}
+
+unsigned ppv_stderr_columns(void)
+{
+    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (h == NULL || h == INVALID_HANDLE_VALUE || !GetConsoleScreenBufferInfo(h, &info))
+        return 0; /* not a console (e.g. a mintty pty): unknown */
+    int cols = info.srWindow.Right - info.srWindow.Left + 1;
+    return cols > 0 ? (unsigned)cols : 0;
 }
 
 void ppv_stderr_write(const char *s, size_t len)
@@ -205,7 +226,7 @@ ppv_io_status ppv_stream_drain(ppv_stream *s)
             s->err = GetLastError();
             s->staged = 0;
             return s->err == ERROR_BROKEN_PIPE || s->err == ERROR_NO_DATA ? PPV_IO_BROKEN
-                                                                           : PPV_IO_ERROR;
+                                                                          : PPV_IO_ERROR;
         }
         p += n;
         s->staged -= n;
@@ -221,8 +242,8 @@ const char *ppv_stream_method(const ppv_stream *s)
 
 static void format_error(DWORD code, char *buf, size_t cap)
 {
-    DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
-                             code, 0, buf, (DWORD)cap, NULL);
+    DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, code,
+                             0, buf, (DWORD)cap, NULL);
     if (n == 0) {
         snprintf(buf, cap, "error %lu", (unsigned long)code);
         return;
@@ -338,8 +359,9 @@ ppv_proc *ppv_proc_open(uint64_t pid, char *err, size_t err_cap)
     if (h == NULL) {
         DWORD e = GetLastError();
         if (e == ERROR_INVALID_PARAMETER)
-            snprintf(err, err_cap,
-                     "no such process (in git-bash use the Windows PID: ps -W or /proc/PID/winpid)");
+            snprintf(
+                err, err_cap,
+                "no such process (in git-bash use the Windows PID: ps -W or /proc/PID/winpid)");
         else if (e == ERROR_ACCESS_DENIED)
             snprintf(err, err_cap, "permission denied");
         else

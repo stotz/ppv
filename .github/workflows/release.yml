@@ -1,7 +1,8 @@
 name: Release
 
-# Push a tag that matches the project version, e.g.:
-#   git tag -a v0.1.0 -m "ppv 0.1.0" && git push origin v0.1.0
+# Push a tag that matches the project version in CMakeLists.txt and has an
+# entry in CHANGELOG.md, e.g.:
+#   git tag -s v0.1.0 -m "ppv 0.1.0" && git push origin v0.1.0
 on:
   push:
     tags: ["v*"]
@@ -32,7 +33,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build and test
         env:
@@ -43,11 +44,15 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
           cmake --install build --config Release --prefix stage
 
-      - name: Check that the tag matches the project version
+      - name: Check that the tag matches the project version and the changelog
         run: |
           version="$(stage/bin/ppv --version | cut -d' ' -f2)"
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::tag $GITHUB_REF_NAME does not match project version $version (CMakeLists.txt)"
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
             exit 1
           fi
 
@@ -55,7 +60,7 @@ jobs:
         run: |
           name="ppv-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          cp stage/bin/ppv* README.md LICENSE "dist/$name/"
+          cp stage/bin/ppv* README.md CHANGELOG.md LICENSE docs/ppv.1 "dist/$name/"
           cd dist
           if [ "$RUNNER_OS" = "Windows" ]; then
             cmake -E tar cf "$name.zip" --format=zip "$name"
@@ -66,11 +71,11 @@ jobs:
 
       # Signed build provenance: proves the archive was built by this workflow
       # from this commit. Verify with: gh attestation verify FILE -R stotz/ppv
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.target }}
           path: dist/*
@@ -82,12 +87,24 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: src
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## \[/ { on = ($0 ~ "^## \\[" v "\\]") ; next }
+            on { print }
+          ' src/CHANGELOG.md > notes.md
+          test -s notes.md
+          cat notes.md
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -95,5 +112,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/*
           --repo "$GITHUB_REPOSITORY"
           --title "ppv $GITHUB_REF_NAME"
-          --generate-notes
+          --notes-file notes.md
           --verify-tag

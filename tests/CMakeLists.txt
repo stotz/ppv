@@ -1,5 +1,5 @@
-# Unit tests of the portable core
-foreach(name format meter)
+# Unit tests of the portable core (no OS dependencies)
+foreach(name format meter options display report)
   add_executable(test_${name} test_${name}.c)
   target_link_libraries(test_${name} PRIVATE ppv_core)
   add_test(NAME unit.${name} COMMAND test_${name})
@@ -25,8 +25,24 @@ set(_e2e ${CMAKE_COMMAND}
   -DCHECK=$<TARGET_FILE:ppv_check>
   -DWORK=${CMAKE_CURRENT_BINARY_DIR})
 
-add_test(NAME e2e.pipe  COMMAND ${_e2e} -DMODE=pipe  -P ${CMAKE_CURRENT_SOURCE_DIR}/e2e.cmake)
-add_test(NAME e2e.file  COMMAND ${_e2e} -DMODE=file  -P ${CMAKE_CURRENT_SOURCE_DIR}/e2e.cmake)
-add_test(NAME e2e.empty COMMAND ${_e2e} -DMODE=empty -P ${CMAKE_CURRENT_SOURCE_DIR}/e2e.cmake)
-add_test(NAME e2e.closed COMMAND ${_e2e} -DMODE=closed -P ${CMAKE_CURRENT_SOURCE_DIR}/e2e.cmake)
-add_test(NAME e2e.usage COMMAND ${_e2e} -DMODE=usage -P ${CMAKE_CURRENT_SOURCE_DIR}/e2e.cmake)
+foreach(mode pipe file empty closed live wait buffer usage)
+  add_test(NAME e2e.${mode}
+    COMMAND ${_e2e} -DMODE=${mode} -P ${CMAKE_CURRENT_SOURCE_DIR}/e2e.cmake)
+endforeach()
+
+# Process harnesses: spawn ppv and helpers as child processes.
+#   test_pid:   ppv --pid on a slow producer (Linux, Windows; 77 = skipped elsewhere)
+#   test_posix: closed standard descriptors, Ctrl-C / SIGTERM, O_APPEND output
+add_executable(test_pid test_pid.c)
+target_link_libraries(test_pid PRIVATE ppv_settings)
+add_test(NAME e2e.pid COMMAND test_pid $<TARGET_FILE:ppv> $<TARGET_FILE:ppv_gen>
+  ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(e2e.pid PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+if(NOT WIN32)
+  add_executable(test_posix test_posix.c)
+  target_link_libraries(test_posix PRIVATE ppv_settings)
+  add_test(NAME e2e.posix COMMAND test_posix $<TARGET_FILE:ppv> $<TARGET_FILE:ppv_gen>
+    $<TARGET_FILE:ppv_check> ${CMAKE_CURRENT_BINARY_DIR})
+  set_tests_properties(e2e.posix PROPERTIES TIMEOUT 60)
+endif()

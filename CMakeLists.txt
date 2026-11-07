@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21) # PROJECT_IS_TOP_LEVEL, presets v3
 
 project(ppv
   VERSION 0.1.0
@@ -64,8 +64,12 @@ endif()
 # Portable core (no OS dependencies, unit tested)
 
 add_library(ppv_core STATIC
+  src/display.c
   src/format.c
-  src/meter.c)
+  src/meter.c
+  src/options.c
+  src/report.c)
+target_compile_definitions(ppv_core PRIVATE PPV_VERSION="${PROJECT_VERSION}")
 target_include_directories(ppv_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(ppv_core PUBLIC ppv_settings)
 
@@ -90,19 +94,16 @@ target_link_libraries(ppv_platform PUBLIC ppv_core)
 
 add_executable(ppv
   src/main.c
-  src/options.c
-  src/display.c
-  src/report.c
   src/transfer.c)
 
 target_link_libraries(ppv PRIVATE ppv_platform ppv_core)
-target_compile_definitions(ppv PRIVATE PPV_VERSION="${PROJECT_VERSION}")
 
 if(MINGW AND PPV_STATIC)
   target_link_options(ppv PRIVATE -static)
 endif()
 
 install(TARGETS ppv RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES docs/ppv.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 
 # ---------------------------------------------------------------------------
 

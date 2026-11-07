@@ -1,0 +1,236 @@
+.TH PPV 1 "2026-11-07" "ppv 0.1.0" "User Commands"
+.SH NAME
+ppv \- portable pipe viewer: show the throughput of a pipe or a process
+.SH SYNOPSIS
+.B cmd |
+.B ppv
+.RI [ OPTION ]...
+.B | cmd
+.br
+.B ppv
+.B \-\-pid
+.I PID
+.RI [ OPTION ]...
+.SH DESCRIPTION
+.B ppv
+copies standard input to standard output and shows on standard error how fast
+the data flows. With
+.B \-\-pid
+it copies nothing and instead shows the read and write throughput of a running
+process.
+.PP
+There is no progress bar and no estimated time:
+.B ppv
+cannot know the size of a stream and does not pretend to.
+.PP
+The live line is updated once per
+.I interval
+(default 1 second) and redrawn in place with a carriage return. It is only
+shown when standard error is a terminal (see
+.BR \-f ).
+.PP
+.EX
+[105M, 12.3M/s, 45.6M/s, 98.7M/s]
+.EE
+.PP
+is the total so far, then the minimum, average and maximum rate over the last
+minute. With
+.B \-\-pid
+the line shows both directions:
+.PP
+.EX
+[R 0B, 0B/s, 0B/s, 0B/s | W 3.84G, 1.06G/s, 1.11G/s, 1.14G/s]
+.EE
+.PP
+Sizes use binary units (K = 1024) with at most three significant digits.
+.SH OPTIONS
+.TP
+.BR \-s ", " \-\-stats
+Print statistics on standard error when the transfer ends (see
+.BR STATISTICS ).
+.TP
+.BR \-q ", " \-\-quiet
+Do not show the live line. Takes precedence over
+.BR \-f .
+.TP
+.BR \-f ", " \-\-force
+Show the live line even if standard error is not a terminal.
+.TP
+.BR \-W ", " \-\-wait
+Show nothing until the first byte has arrived (with
+.BR \-\-pid :
+until the process has read or written something).
+.TP
+.BR \-i ", " \-\-interval " " \fISEC\fR
+Update interval in seconds, 0.1 to 60, as a plain decimal number
+(default 1). The interval is also the sampling period of the statistics.
+.TP
+.BR \-N ", " \-\-name " " \fINAME\fR
+Prefix the live line and the statistics with
+.IR NAME
+(at most 128 characters), useful when several
+.B ppv
+run in one pipeline. An empty name is ignored.
+.TP
+.BR \-B ", " \-\-buffer\-size " " \fISIZE\fR
+Size of the transfer buffer, 4K to 256M, with an optional suffix
+.BR K ", " M " or " G
+(default 1M).
+.TP
+.BR \-p ", " \-\-pid " " \fIPID\fR
+Do not copy anything; watch the I/O counters of process
+.I PID
+instead and stop when it exits. See
+.BR "WATCHING A PROCESS" .
+.TP
+.BR \-h ", " \-\-help
+Show the usage and exit.
+.TP
+.BR \-V ", " \-\-version
+Show the version and exit.
+.PP
+Short options can be bundled
+.RB ( \-sq )
+and take their argument attached or separate
+.RB ( \-i0.5 ", " "\-i 0.5" ).
+Long options take it with
+.B =
+or separate.
+.B ppv
+accepts no file arguments: it always reads standard input.
+.SH STATISTICS
+With
+.B \-s
+the following is printed when the transfer ends:
+.PP
+.EX
+ppv: 20.0M (20971520 bytes) in 3.1s, avg 6.51M/s
+  rate     min 0B/s, p50 0B/s, p90 62.0K/s, max 64.0K/s (3 x 1.0s)
+  waiting  input 0.0s (1%), output 3.0s (99%): the consumer (output side) is the bottleneck
+  io       389 transfers, avg 52.6K, splice
+.EE
+.TP
+.B rate
+Minimum, median, 90th percentile and maximum of the per-interval rates, and
+how many intervals were measured. The percentiles come from a logarithmic
+histogram with about 6% resolution.
+.TP
+.B waiting
+How long
+.B ppv
+was blocked reading (the producer was slower) and writing (the consumer was
+slower), as time and as share of the run time. One side is named as the
+bottleneck when it accounts for at least half of the run time and more than
+the other side.
+.TP
+.B io
+Number of read/write cycles, their average size, and the transfer method:
+.B splice
+(Linux, zero copy),
+.B read/write
+(other POSIX systems, or Linux when a side cannot be spliced, e.g. a terminal
+or a file opened for appending) or
+.B ReadFile/WriteFile
+(Windows).
+.PP
+After an interruption the first line ends with
+.BR "(interrupted)" .
+.SH WATCHING A PROCESS
+.B ppv \-\-pid
+.I PID
+reads the I/O counters of another process once per interval:
+.IR /proc/PID/io
+.RB ( rchar ", " wchar )
+on Linux,
+.B GetProcessIoCounters
+on Windows. The counters include all I/O of the process: files, pipes and
+sockets. Watching ends when the process exits, or with Ctrl-C.
+.PP
+Linux needs a kernel with I/O accounting
+.RB ( CONFIG_TASK_IO_ACCOUNTING ,
+standard on distribution kernels, missing on WSL2) and permission to read the
+process (same user, or root). The last partial interval before the process
+exits is lost, because
+.I /proc
+is gone by then; Windows still delivers the final counters. Other POSIX
+systems are not supported.
+.PP
+In git-bash and MSYS2 the shell's
+.B $!
+is an MSYS PID;
+.B ppv
+needs the Windows PID
+.RB ( "ps \-W" ,
+.BR "cat /proc/PID/winpid" ).
+.SH EXIT STATUS
+.TP
+.B 0
+The input ended and everything was written, or the watched process exited.
+.TP
+.B 1
+An error occurred, or the reader of standard output went away before the input
+ended (the message is
+.BR "output closed before the input ended" ).
+.TP
+.B 2
+Usage error.
+.TP
+.B 130
+Interrupted with Ctrl-C (SIGINT).
+.TP
+.B 143
+Terminated with SIGTERM.
+.PP
+On POSIX systems
+.B ppv
+ends by re-raising the signal after printing the statistics, so the shell sees
+a death by signal, as with any other filter.
+.SH ENVIRONMENT
+None. The locale is not consulted; numbers are always printed with a decimal
+point.
+.SH NOTES
+Standard input and output are used as binary streams on all platforms; on
+Windows no CR/LF translation takes place. Standard descriptors that are closed
+at start-up are reported as an error instead of being reused.
+.PP
+The live line never reaches the last column of the terminal and therefore
+never wraps; it is cut if the terminal is narrower.
+.PP
+Only SIGINT and SIGTERM are handled. SIGPIPE is ignored so that a closed
+output is reported with exit status 1.
+.SH EXAMPLES
+Copy a backup over the network and see where the time goes:
+.PP
+.EX
+tar cf \- data | ppv \-s | ssh host "cat > backup.tar"
+.EE
+.PP
+Two meters in one pipeline, named:
+.PP
+.EX
+cat big.iso | ppv \-N raw | gzip | ppv \-N gz > big.iso.gz
+.EE
+.PP
+Watch what a running process reads and writes, two updates per second:
+.PP
+.EX
+ppv \-\-pid 1234 \-i 0.5
+.EE
+.PP
+Quiet copy with statistics only, for a script:
+.PP
+.EX
+ppv \-q \-s < input > output 2> stats.txt
+.EE
+.SH SEE ALSO
+.BR pv (1),
+.BR dd (1),
+.BR splice (2),
+.BR proc (5)
+.PP
+Source and binaries:
+.UR https://github.com/stotz/ppv
+GitHub
+.UE
+.SH AUTHOR
+Urs Stotz. MIT license.

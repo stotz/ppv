@@ -66,7 +66,7 @@ bool ppv_window_rates(const ppv_window *w, double *min, double *avg, double *max
 /* Bucket layout: values 0..7 map to themselves; above that every power of */
 /* two is split into 8 sub-buckets (3 mantissa bits), integer math only.    */
 
-static unsigned bucket_of(uint64_t v)
+unsigned ppv_stats_bucket_of(uint64_t v)
 {
     if (v < 8)
         return (unsigned)v;
@@ -76,7 +76,7 @@ static unsigned bucket_of(uint64_t v)
     return 8u + (msb - 3u) * 8u + (unsigned)((v >> (msb - 3u)) & 7u);
 }
 
-static double bucket_mid(unsigned b)
+double ppv_stats_bucket_mid(unsigned b)
 {
     if (b < 8)
         return (double)b;
@@ -100,7 +100,7 @@ void ppv_stats_add(ppv_stats *s, double rate)
     if (s->n == 0 || rate > s->max)
         s->max = rate;
     uint64_t v = rate >= 1.8e19 ? UINT64_MAX : (uint64_t)rate;
-    s->hist[bucket_of(v)]++;
+    s->hist[ppv_stats_bucket_of(v)]++;
     s->n++;
 }
 
@@ -124,7 +124,7 @@ double ppv_stats_percentile(const ppv_stats *s, double p)
     for (unsigned b = 0; b < PPV_STATS_BUCKETS; b++) {
         seen += s->hist[b];
         if (seen >= rank) {
-            double v = bucket_mid(b);
+            double v = ppv_stats_bucket_mid(b);
             return v < s->min ? s->min : v > s->max ? s->max : v;
         }
     }

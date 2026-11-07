@@ -5,13 +5,14 @@
  *        process I/O counters from /proc/<pid>/io.
  * Other: read()/write(); --pid is not supported.
  */
+/* Feature test macros: glibc hides splice()/pipe2() without _GNU_SOURCE. The
+ * BSDs and macOS expose their full namespace by default, so nothing is
+ * requested there (a strict _POSIX_C_SOURCE would hide TIOCGWINSZ and
+ * pthread_cond_timedwait_relative_np). */
 #if defined(__linux__)
 #  define _GNU_SOURCE
-#else
-#  define _POSIX_C_SOURCE 200809L
-#  if defined(__APPLE__)
-#    define _DARWIN_C_SOURCE
-#  endif
+#elif defined(__APPLE__)
+#  define _DARWIN_C_SOURCE
 #endif
 
 #include "platform/platform.h"
@@ -24,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -31,17 +33,43 @@
 /* ------------------------------------------------------------------------ */
 /* Process setup, interruption, time                                        */
 
-static volatile sig_atomic_t g_interrupted;
+static volatile sig_atomic_t g_interrupted; /* the signal number, 0 = none */
+
+/* Standard descriptors that were closed at start-up (bit n = fd n). */
+static int g_closed_std_fds;
 
 static void on_signal(int sig)
 {
-    (void)sig;
-    g_interrupted = 1;
+    g_interrupted = sig;
+}
+
+/* Reopen closed standard descriptors on /dev/null. Without this the pipe or
+ * file opened later would get number 0, 1 or 2 and silently become our
+ * stdin/stdout/stderr (ppv would e.g. splice from its own pipe forever). */
+static int ensure_std_fds(void)
+{
+    for (int fd = 0; fd <= 2; fd++) {
+        if (fcntl(fd, F_GETFD) != -1 || errno != EBADF)
+            continue;
+        g_closed_std_fds |= 1 << fd;
+        int nfd = open("/dev/null", fd == 0 ? O_RDONLY : O_WRONLY);
+        if (nfd < 0)
+            return -1;
+        if (nfd != fd) { /* cannot happen (fd is the lowest free number), but be safe */
+            if (dup2(nfd, fd) < 0)
+                return -1;
+            close(nfd);
+        }
+    }
+    return 0;
 }
 
 int ppv_platform_init(void)
 {
     struct sigaction sa;
+
+    if (ensure_std_fds() != 0)
+        return -1;
 
     memset(&sa, 0, sizeof sa);
     sigemptyset(&sa.sa_mask);
@@ -61,6 +89,31 @@ int ppv_platform_init(void)
 bool ppv_interrupted(void)
 {
     return g_interrupted != 0;
+}
+
+int ppv_interrupt_exit_code(void)
+{
+    return 128 + (int)g_interrupted;
+}
+
+void ppv_exit_interrupted(void)
+{
+    int sig = (int)g_interrupted;
+    fflush(NULL);
+    if (sig > 0) {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof sa);
+        sigemptyset(&sa.sa_mask);
+        sa.sa_handler = SIG_DFL;
+        if (sigaction(sig, &sa, NULL) == 0) {
+            sigset_t set;
+            sigemptyset(&set);
+            sigaddset(&set, sig);
+            pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+            raise(sig);
+        }
+    }
+    _Exit(ppv_interrupt_exit_code()); /* re-raise failed or the signal is unknown */
 }
 
 uint64_t ppv_now_ns(void)
@@ -92,6 +145,14 @@ bool ppv_stderr_in_foreground(void)
     return fg == -1 || fg == getpgrp();
 }
 
+unsigned ppv_stderr_columns(void)
+{
+    struct winsize ws;
+    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) != 0)
+        return 0;
+    return ws.ws_col;
+}
+
 void ppv_stderr_write(const char *s, size_t len)
 {
     while (len > 0) {
@@ -112,12 +173,12 @@ void ppv_stderr_write(const char *s, size_t len)
 struct ppv_stream {
     unsigned char *buf;
     size_t cap;
-    size_t staged;        /* bytes read but not yet written */
-    bool staged_in_pipe;  /* staged bytes are in the splice pipe, not buf */
+    size_t staged;       /* bytes read but not yet written */
+    bool staged_in_pipe; /* staged bytes are in the splice pipe, not buf */
     int err;
 #if defined(__linux__)
     bool use_splice;
-    int mid[2];           /* intermediate pipe for splice in -> mid -> out */
+    int mid[2]; /* intermediate pipe for splice in -> mid -> out */
     size_t pipe_cap;
 #endif
 };
@@ -129,8 +190,7 @@ static void wait_fd(int fd, short events)
     p.fd = fd;
     p.events = events;
     p.revents = 0;
-    while (poll(&p, 1, -1) < 0 && errno == EINTR) {
-    }
+    while (poll(&p, 1, -1) < 0 && errno == EINTR) {}
 }
 
 static ppv_io_status fail(ppv_stream *s, int err)
@@ -159,6 +219,15 @@ static ppv_io_status write_all(ppv_stream *s, const unsigned char *p, size_t len
 
 ppv_stream *ppv_stream_open(size_t buffer_size, char *err, size_t err_cap)
 {
+    if (g_closed_std_fds & (1 << STDIN_FILENO)) {
+        snprintf(err, err_cap, "standard input is closed");
+        return NULL;
+    }
+    if (g_closed_std_fds & (1 << STDOUT_FILENO)) {
+        snprintf(err, err_cap, "standard output is closed");
+        return NULL;
+    }
+
     ppv_stream *s = calloc(1, sizeof *s);
     if (s != NULL)
         s->buf = malloc(buffer_size);
@@ -286,9 +355,27 @@ const char *ppv_stream_method(const ppv_stream *s)
     return "read/write";
 }
 
+/* strerror() is not thread-safe; this runs in the transfer thread. */
+static void errno_text(int err, char *buf, size_t cap)
+{
+    if (cap == 0)
+        return;
+    buf[0] = '\0';
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    /* glibc with _GNU_SOURCE provides the GNU variant, which may return a
+     * static string instead of filling buf. */
+    const char *msg = strerror_r(err, buf, cap);
+    if (msg != buf)
+        snprintf(buf, cap, "%s", msg);
+#else
+    if (strerror_r(err, buf, cap) != 0)
+        snprintf(buf, cap, "error %d", err);
+#endif
+}
+
 void ppv_stream_error(const ppv_stream *s, char *buf, size_t cap)
 {
-    snprintf(buf, cap, "%s", strerror(s->err));
+    errno_text(s->err, buf, cap);
 }
 
 void ppv_stream_close(ppv_stream *s)
@@ -439,7 +526,7 @@ ppv_proc *ppv_proc_open(uint64_t pid, char *err, size_t err_cap)
         else if (e == EACCES || e == EPERM)
             snprintf(err, err_cap, "permission denied (process of another user?)");
         else
-            snprintf(err, err_cap, "%s", strerror(e));
+            errno_text(e, err, err_cap);
         return NULL;
     }
 

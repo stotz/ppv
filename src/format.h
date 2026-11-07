@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 /* "0B", "999B", "0.98K", "1.50M", "105M" - at most 3 significant digits. */
-void ppv_fmt_size(char *buf, size_t cap, double bytes);
+void ppv_fmt_size(char *buf, size_t cap, double v);
 
 /* ppv_fmt_size() + "/s" */
 void ppv_fmt_rate(char *buf, size_t cap, double bytes_per_sec);

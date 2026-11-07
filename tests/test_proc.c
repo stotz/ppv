@@ -22,7 +22,7 @@ static uint64_t self_pid(void)
 }
 #endif
 
-#define WRITE_BYTES (4u * 1024u * 1024u)
+#define WRITE_BYTES (UINT64_C(4) * 1024 * 1024)
 
 int main(void)
 {

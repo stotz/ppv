@@ -1,0 +1,32 @@
+# Static analysis beyond the compiler warnings. Run locally with:
+#   cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+#   clang-tidy -p build src/*.c src/platform/posix/*.c tests/*.c
+#
+# Disabled checks and why:
+#   DeprecatedOrUnsafeBufferHandling  wants the Microsoft *_s functions (not portable)
+#   easily-swappable-parameters       (buf, cap) pairs are idiomatic C
+#   cert-err33-c                      unchecked printf/fputs return values are intended
+#   reserved-identifier, dcl37/dcl51  feature test macros (_GNU_SOURCE) must be defined
+#   include-cleaner                   too strict about transitive includes in C
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  concurrency-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-inconsistent-declaration-parameter-name,
+  readability-misleading-indentation,
+  readability-redundant-declaration,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -bugprone-easily-swappable-parameters,
+  -cert-err33-c,
+  -bugprone-reserved-identifier,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -misc-include-cleaner
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/(src|tests)/.*'
+FormatStyle: file

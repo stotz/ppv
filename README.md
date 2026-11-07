@@ -1,12 +1,20 @@
 # ppv – portable pipe viewer
 
+<img src="docs/ppv.png" align="right" width="200" alt="">
+
 [![CI](https://github.com/stotz/ppv/actions/workflows/ci.yml/badge.svg)](https://github.com/stotz/ppv/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/stotz/ppv/actions/workflows/codeql.yml/badge.svg)](https://github.com/stotz/ppv/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/stotz/ppv/badge)](https://scorecard.dev/viewer/?uri=github.com/stotz/ppv)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Shows how fast data flows through a pipe, or through a running process.
 No progress bar, no ETA: ppv cannot know the final size of a stream, so it
 does not pretend to.
+
+ppv exists because `pv` has no native Windows build: one static binary that
+behaves the same on Linux, macOS, the BSDs and Windows (console, PowerShell,
+git-bash), with no dependencies, zero-copy transfer where the kernel offers
+it, and only the options a pipe can actually answer.
 
 ```sh
 tar cf - data | ppv -s | nc host 30000     # copy stdin to stdout, show throughput
@@ -41,43 +49,78 @@ ppv: 20.0M (20971520 bytes) in 3.1s, avg 6.51M/s
 | `-f`, `--force` | live line even if stderr is not a terminal |
 | `-W`, `--wait` | nothing is shown before the first byte arrives |
 | `-i`, `--interval SEC` | update interval, 0.1–60 s (default 1) |
-| `-N`, `--name NAME` | prefix for the output |
+| `-N`, `--name NAME` | prefix for the output (at most 128 characters) |
 | `-B`, `--buffer-size SIZE` | transfer buffer, 4K–256M (default 1M) |
 | `-p`, `--pid PID` | watch a process instead of copying |
 
-Exit status: 0 ok, 1 error or output closed early, 2 usage error, 130 interrupted (Ctrl-C).
+Exit status: 0 ok, 1 error or output closed early, 2 usage error,
+130 interrupted (Ctrl-C), 143 terminated (SIGTERM). Details: `man ppv`
+([docs/ppv.1](docs/ppv.1)).
+
+## Install
+
+Binaries for Linux (x64, arm64), macOS (universal) and Windows (x64, arm64)
+are on the [releases page](https://github.com/stotz/ppv/releases); each
+archive contains `ppv`, the man page, `README.md`, `CHANGELOG.md` and
+`LICENSE`. Unpack and put `ppv` on your `PATH`:
+
+```sh
+tar xzf ppv-0.1.0-linux-x64.tar.gz
+sudo install -m 755 ppv-0.1.0-linux-x64/ppv /usr/local/bin/
+sudo install -m 644 ppv-0.1.0-linux-x64/ppv.1 /usr/local/share/man/man1/
+```
+
+Windows: unzip `ppv-0.1.0-windows-x64.zip` and copy `ppv.exe` to a directory
+on `%PATH%`. It runs in cmd, PowerShell, Windows Terminal and git-bash:
+
+```powershell
+cmd /c "type big.iso" | ppv -s | Out-Null          # PowerShell
+tar cf - data | ppv -s | ssh host "cat > data.tar"  # git-bash, same as on Linux
+```
+
+(PowerShell's own `Get-Content` goes through its object pipeline and is slow
+for binary data; use `cmd /c type`, or run the pipeline in `cmd`.)
 
 ## Build
 
-Requires CMake ≥ 3.20 and a C17 compiler (gcc, clang, MinGW-w64, MSVC). No
-other dependencies.
+Requires CMake ≥ 3.21 and a C17 compiler (gcc, clang, MinGW-w64, MSVC). No
+other dependencies, no configure script: CMake is the configure step.
 
 ```sh
 cmake --preset release && cmake --build --preset release && ctest --preset release
 cmake --install build/release --prefix /usr/local
 ```
 
-Without Ninja: `cmake -S . -B build && cmake --build build`.
+Without Ninja: `cmake -S . -B build && cmake --build build && ctest --test-dir build`.
 
 Options: `PPV_BUILD_TESTS` (ON), `PPV_WARNINGS_AS_ERRORS` (OFF; ON in the
 `debug` preset), `PPV_STATIC` (ON: the MinGW/MSVC binary needs only
 `kernel32` and the Windows UCRT).
+
+Contributing, code style and the test layout: [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
 ## Design
 
 ```
 src/
   main.c         orchestration: transfer thread + sampling/display loop
-  options.c      command line (own parser, no getopt dependency)
   transfer.c     copy loop; measures time blocked on input vs. output
-  meter.c        1-minute sliding window, whole-run stats (log histogram)
-  format.c       105M / 12.3M/s / 6m23s
-  display.c      the \r status line
-  report.c       -s statistics
+  options.c      command line (own parser, no getopt dependency)   \
+  meter.c        1-minute sliding window, whole-run stats (log histogram) |
+  format.c       105M / 12.3M/s / 6m23s                                 | portable core,
+  display.c      the \r status line (rendering only)                     | unit tested
+  report.c       -s statistics (rendering only)                         /
   platform/
     platform.h   the only OS interface
     posix/       Linux, BSD, macOS
-    win32/       Windows 7+
+    win32/       Windows 7+ (built and tested on current Windows; 7 is untested)
+tests/
+  test_*.c       unit tests of the core; test_proc, test_pid, test_posix
+                 drive the platform layer and the binary as child processes
+  e2e.cmake      end-to-end tests through real pipes and files
+docs/
+  ppv.1          man page
+  ppv.png        logo (README only, not part of the release archives)
 ```
 
 The transfer thread only moves data and bumps atomic counters; the main thread
@@ -101,13 +144,19 @@ Windows).
   (`ps -W`, `cat /proc/PID/winpid`).
 * On Linux the last interval before a watched process exits is lost
   (`/proc` is gone); Windows still delivers the final counters.
+* Closed standard descriptors are an error (`ppv <&-` exits with 1), they are
+  never silently reused.
+* On POSIX, Ctrl-C and SIGTERM end ppv by re-raising the signal after the
+  statistics, so `$?` is 130 or 143 and the shell treats it like any killed
+  filter.
 
 ## Releases
 
 Pushing a tag `vX.Y.Z` that matches `project(VERSION ...)` in `CMakeLists.txt`
-builds and tests binaries for Linux (x64, arm64), macOS (universal) and
-Windows (x64, arm64) and publishes them with SHA256 checksums as a GitHub
-release:
+and has a section in [CHANGELOG.md](CHANGELOG.md) builds and tests binaries
+for Linux (x64, arm64), macOS (universal) and Windows (x64, arm64) and
+publishes them with SHA256 checksums and the changelog section as release
+notes:
 
 ```sh
 git tag -s v0.1.0 -m "ppv 0.1.0" && git push origin v0.1.0

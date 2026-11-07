@@ -4,6 +4,7 @@
  */
 #include "pattern.h"
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,11 +24,11 @@ int main(int argc, char **argv)
             if (stop && pos + k >= size)
                 return 0;
             if (pos + k >= size) {
-                fprintf(stderr, "check: more than %llu bytes\n", (unsigned long long)size);
+                fprintf(stderr, "check: more than %" PRIu64 " bytes\n", size);
                 return 1;
             }
             if (buf[k] != pattern_at(pos + k)) {
-                fprintf(stderr, "check: mismatch at byte %llu\n", (unsigned long long)(pos + k));
+                fprintf(stderr, "check: mismatch at byte %" PRIu64 "\n", pos + k);
                 return 1;
             }
         }
@@ -36,8 +37,7 @@ int main(int argc, char **argv)
             return 0;
     }
     if (pos != size) {
-        fprintf(stderr, "check: got %llu bytes, expected %llu\n", (unsigned long long)pos,
-                (unsigned long long)size);
+        fprintf(stderr, "check: got %" PRIu64 " bytes, expected %" PRIu64 "\n", pos, size);
         return 1;
     }
     return 0;

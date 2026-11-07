@@ -1,0 +1,8 @@
+# The tests are single threaded command line programs: exit() and friends are
+# fine there, and rewind() on a temporary file needs no error handling.
+InheritParentConfig: true
+Checks: >
+  -concurrency-mt-unsafe,
+  -bugprone-unsafe-functions,
+  -cert-msc24-c,
+  -cert-msc33-c

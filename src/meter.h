@@ -37,10 +37,15 @@ typedef struct ppv_stats {
     uint64_t hist[PPV_STATS_BUCKETS];
 } ppv_stats;
 
-void   ppv_stats_init(ppv_stats *s);
-void   ppv_stats_add(ppv_stats *s, double rate);
+void ppv_stats_init(ppv_stats *s);
+void ppv_stats_add(ppv_stats *s, double rate);
 /* p in [0, 1]; 0 if there are no samples. */
 double ppv_stats_percentile(const ppv_stats *s, double p);
+
+/* Histogram layout, exposed for the unit tests: the bucket of a value, and the
+ * value the middle of a bucket stands for. */
+unsigned ppv_stats_bucket_of(uint64_t v);
+double ppv_stats_bucket_mid(unsigned b);
 
 typedef struct ppv_meter {
     uint64_t interval_ns;

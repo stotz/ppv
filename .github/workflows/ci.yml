@@ -13,7 +13,33 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Actions are pinned to commit SHAs (the comment names the tag); Dependabot
+# keeps both in step.
+
 jobs:
+  # Formatting and static analysis. clang-format output differs between major
+  # versions, so the version is fixed here and in CONTRIBUTING.md.
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install clang-format and clang-tidy 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format-18 clang-tidy-18
+      - name: clang-format
+        run: |
+          clang-format-18 --version
+          clang-format-18 --dry-run -Werror src/*.c src/*.h src/platform/*.h \
+            src/platform/*/*.c tests/*.c tests/*.h
+      - name: clang-tidy
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          clang-tidy-18 --version
+          clang-tidy-18 -p build src/*.c src/platform/posix/*.c tests/*.c
+
   # Native toolchains on all supported platforms: build, unit + end-to-end tests,
   # then a smoke test of the installed binary in a real pipe.
   build:
@@ -27,14 +53,14 @@ jobs:
           - { name: linux-clang,   os: ubuntu-latest,    cc: clang, werror: ON }
           - { name: linux-arm64,   os: ubuntu-24.04-arm, cc: gcc,   werror: ON }
           - { name: macos,         os: macos-latest,     cc: clang, werror: ON }
-          # MSVC: warnings visible but not fatal until the first clean run
-          - { name: windows-msvc,  os: windows-latest,   cc: "",    werror: OFF }
-          - { name: windows-arm64, os: windows-11-arm,   cc: "",    werror: OFF }
+          # MSVC /W4 was clean in the first CI run (df26fd6), so warnings are fatal.
+          - { name: windows-msvc,  os: windows-latest,   cc: "",    werror: ON }
+          - { name: windows-arm64, os: windows-11-arm,   cc: "",    werror: ON }
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure
         run: >
@@ -55,6 +81,7 @@ jobs:
       - name: Smoke test
         run: |
           stage/bin/ppv --version
+          test -f stage/share/man/man1/ppv.1
           head -c 200000000 /dev/zero | stage/bin/ppv -q -s | cat > /dev/null
 
   # MinGW-w64 / UCRT64 as used locally (MSYS2), with the debug preset (-Werror).
@@ -65,8 +92,8 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v7
-      - uses: msys2/setup-msys2@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: UCRT64
           update: false
@@ -77,6 +104,21 @@ jobs:
       - run: cmake --preset debug
       - run: cmake --build --preset debug
       - run: ctest --preset debug
+
+  # The POSIX layer on a BSD (clang, no splice, no --pid).
+  freebsd:
+    name: freebsd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          usesh: true
+          prepare: pkg install -y cmake ninja
+          run: |
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPPV_WARNINGS_AS_ERRORS=ON
+            cmake --build build
+            ctest --test-dir build --output-on-failure
 
   # Memory errors, undefined behaviour and data races between the threads.
   sanitizers:
@@ -93,7 +135,7 @@ jobs:
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
       TSAN_OPTIONS: halt_on_error=1
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Allow TSan with high-entropy ASLR
         run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Configure
@@ -104,3 +146,31 @@ jobs:
           "-DCMAKE_C_FLAGS=${{ matrix.flags }} -fno-omit-frame-pointer"
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
+
+  # Line coverage of src/ from the whole test suite (gcc/gcov, gcovr).
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: pipx install gcovr # pip refuses --user on the externally managed runner Python
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=gcc
+          "-DCMAKE_C_FLAGS=--coverage -O0"
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - name: Report
+        run: |
+          mkdir -p coverage
+          gcovr --root . --filter src/ --exclude-unreachable-branches \
+            --print-summary --fail-under-line 80 \
+            --html-details coverage/index.html --txt coverage/summary.txt build
+          cat coverage/summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: error
