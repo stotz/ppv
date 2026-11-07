@@ -151,7 +151,8 @@ static void report_direction(sink *s, const char *label, uint64_t bytes, uint64_
     ppv_fmt_rate(avg, sizeof avg, per_second(bytes, elapsed_ns));
     sample_count(count, sizeof count, st);
     rate_summary(rates, sizeof rates, st);
-    emit(s, "  %-6s %s (%s bytes), avg %s%s\n", label, total, exact, avg, count);
+    emit(s, "  %-6s %s (%s byte%s), avg %s%s\n", label, total, exact, bytes == 1 ? "" : "s", avg,
+         count);
     if (rates[0] != '\0')
         emit(s, "         %s\n", rates);
 }

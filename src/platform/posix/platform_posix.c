@@ -110,9 +110,11 @@ void ppv_exit_interrupted(void)
             sigemptyset(&set);
             sigaddset(&set, sig);
             pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+            PPV_COVERAGE_FLUSH(); /* as late as possible: nothing after this is recorded */
             raise(sig);
         }
     }
+    PPV_COVERAGE_FLUSH();
     _Exit(ppv_interrupt_exit_code()); /* re-raise failed or the signal is unknown */
 }
 

@@ -54,6 +54,7 @@ int ppv_interrupt_exit_code(void)
 void ppv_exit_interrupted(void)
 {
     fflush(NULL);
+    PPV_COVERAGE_FLUSH();
     _Exit(ppv_interrupt_exit_code());
 }
 

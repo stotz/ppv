@@ -157,8 +157,10 @@ int main(void)
     p.read_rates = &rd;
     p.interrupted = true;
     p.name = "w";
+    p.read_bytes = 1;
     (void)ppv_report_process(&p, text, sizeof text);
     EXPECT_CONTAINS(text, "w: pid 4242, watched 12.0s (interrupted)\n");
+    EXPECT_CONTAINS(text, "  read   1B (1 byte), avg ");
 
     return TEST_RESULT();
 }

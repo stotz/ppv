@@ -11,6 +11,10 @@ include(CheckCSourceCompiles)
 option(PPV_BUILD_TESTS "Build the tests" ${PROJECT_IS_TOP_LEVEL})
 option(PPV_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(PPV_STATIC "Link the C runtime statically (MinGW: no DLL dependencies)" ON)
+# For coverage builds only: gcov writes its data at exit(), which a death by
+# signal skips. With this ON, ppv flushes the data before re-raising the
+# signal, so the Ctrl-C paths are measured. Needs gcc/clang with --coverage.
+option(PPV_COVERAGE "Flush gcov data before dying by signal" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -31,6 +35,9 @@ endif()
 # Common settings for all targets of this project
 
 add_library(ppv_settings INTERFACE)
+if(PPV_COVERAGE)
+  target_compile_definitions(ppv_settings INTERFACE PPV_COVERAGE=1)
+endif()
 
 if(MSVC)
   target_compile_options(ppv_settings INTERFACE /W4 /utf-8

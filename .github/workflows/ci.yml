@@ -149,9 +149,9 @@ jobs:
 
   # Line coverage of src/ from the whole test suite (gcc/gcov, gcovr), for
   # the POSIX layer on Linux and the Win32 layer on MinGW. What is left
-  # uncovered is mostly error paths that need fault injection (ENOMEM,
-  # pthread_create failing) and code that runs just before a death by signal
-  # (gcov cannot write its data then).
+  # uncovered is error paths that need fault injection (ENOMEM,
+  # pthread_create failing). PPV_COVERAGE makes ppv flush the gcov data
+  # before it dies by signal, so the Ctrl-C paths count too.
   coverage:
     name: coverage-linux
     runs-on: ubuntu-latest
@@ -163,6 +163,7 @@ jobs:
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_COMPILER=gcc
+          -DPPV_COVERAGE=ON
           "-DCMAKE_C_FLAGS=--coverage -O0"
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
@@ -200,16 +201,16 @@ jobs:
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
+          -DPPV_COVERAGE=ON
           "-DCMAKE_C_FLAGS=--coverage -O0"
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
       - name: Report
-        # No threshold yet: the Win32 layer has never been measured. Set one
-        # from the first results.
+        # Same threshold as Linux: the first run (e348ad8) measured 89.4 %.
         run: |
           mkdir -p coverage
           gcovr --root . --filter src/ --exclude-unreachable-branches \
-            --print-summary \
+            --print-summary --fail-under-line 85 \
             --html-details coverage/index.html --txt coverage/summary.txt build
           cat coverage/summary.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

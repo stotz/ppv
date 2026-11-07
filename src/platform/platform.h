@@ -77,6 +77,15 @@ int ppv_interrupt_exit_code(void);
  * ppv_interrupt_exit_code(). Other threads are not joined. Never returns. */
 PPV_NORETURN void ppv_exit_interrupted(void);
 
+/* Coverage builds (-DPPV_COVERAGE): write the gcov data now, because a death
+ * by signal or _Exit() skips the atexit handler that normally does it. */
+#if defined(PPV_COVERAGE) && (defined(__GNUC__) || defined(__clang__))
+void __gcov_dump(void);
+#  define PPV_COVERAGE_FLUSH() __gcov_dump()
+#else
+#  define PPV_COVERAGE_FLUSH() ((void)0)
+#endif
+
 /* Monotonic clock in nanoseconds (arbitrary epoch). */
 uint64_t ppv_now_ns(void);
 
