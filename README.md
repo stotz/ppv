@@ -21,24 +21,35 @@ tar cf - data | ppv -s | nc host 30000     # copy stdin to stdout, show throughp
 ppv --pid 1234 -s                           # watch the I/O of a running process
 ```
 
-Live line on stderr (updated once per second, `\r` only):
+Live line on stderr (redrawn once per second, `\r` only):
 
 ```
-[105M, 12.3M/s, 45.6M/s, 98.7M/s]          total, min, avg, max over the last minute
-[R 0B, 0B/s, 0B/s, 0B/s | W 3.84G, 1.06G/s, 1.11G/s, 1.14G/s]   --pid
+ppv[887M, min 474M/s, avg 504M/s, p90 533M/s, max 545M/s]   total; rates over the last minute
+ppv[R 0B avg 0B/s | W 3.84G avg 1.11G/s]                     --pid: per direction
 ```
+
+The rates are sampled every 100 ms whatever `-i` says; `avg` is bytes divided
+by time. Each number is right-aligned to the widest value it has shown, so
+the line does not jump around. `-N` replaces the `ppv` label.
 
 Statistics with `-s` at the end:
 
 ```
-ppv: 20.0M (20971520 bytes) in 3.1s, avg 6.51M/s
-  rate     min 0B/s, p50 0B/s, p90 62.0K/s, max 64.0K/s (3 x 1.0s)
-  waiting  input 0.0s (1%), output 3.0s (99%): the consumer (output side) is the bottleneck
-  io       389 transfers, avg 52.6K, splice
+ppv: 887M (930_086_912 bytes) in 1.8s, avg 504M/s
+  rate     min 474M/s, p50 486M/s, p90 533M/s, max 545M/s (18 samples of 100ms)
+  time     in read 1.7s (99%), in write 18ms (1%): the producer (input side) is the bottleneck (94:1)
+  io       887 transfers, avg 1.00M, ReadFile/WriteFile
 ```
 
-`waiting` is the time ppv was blocked reading (producer too slow) or writing
-(consumer too slow) – it tells you which side of the pipe limits the speed.
+* `rate`: percentiles of the 100 ms samples, from a log histogram with about
+  6 % resolution. With fewer than 10 samples (one second) only min and max
+  are printed; there is no point in a p90 of three values.
+* `time`: how long ppv spent inside its read and write calls, i.e. waiting
+  for the producer and for the consumer. A filter has no work of its own, so
+  the two shares add up to the run time; the ratio in brackets is what
+  matters, and the verdict names the slower side.
+* `io`: number of read/write cycles and their average size – the write size
+  of the producer, in effect – and how the bytes were moved.
 
 ## Options
 
@@ -48,8 +59,8 @@ ppv: 20.0M (20971520 bytes) in 3.1s, avg 6.51M/s
 | `-q`, `--quiet` | no live line |
 | `-f`, `--force` | live line even if stderr is not a terminal |
 | `-W`, `--wait` | nothing is shown before the first byte arrives |
-| `-i`, `--interval SEC` | update interval, 0.1–60 s (default 1) |
-| `-N`, `--name NAME` | prefix for the output (at most 128 characters) |
+| `-i`, `--interval SEC` | redraw interval, 0.1–60 s (default 1); sampling is always 100 ms |
+| `-N`, `--name NAME` | label for the output instead of `ppv` (at most 128 characters) |
 | `-B`, `--buffer-size SIZE` | transfer buffer, 4K–256M (default 1M) |
 | `-p`, `--pid PID` | watch a process instead of copying |
 
@@ -124,9 +135,11 @@ docs/
 ```
 
 The transfer thread only moves data and bumps atomic counters; the main thread
-samples them each interval. A blocked reader or writer never freezes the
-display, and no `select()` on pipes is needed (it does not exist for pipes on
-Windows).
+samples them every 100 ms and redraws every `-i` interval. A blocked reader or
+writer never freezes the display, and no `select()` on pipes is needed (it
+does not exist for pipes on Windows). Rates live in a one-minute ring buffer
+(min, avg, p90, max for the live line) and a 496-bucket log histogram
+(percentiles over the whole run in constant memory).
 
 | | Linux | Windows |
 |---|---|---|
@@ -142,8 +155,12 @@ Windows).
   on distribution kernels; missing on WSL2). Other POSIX systems: not supported.
 * git-bash/MSYS: `$!` is an MSYS PID; ppv needs the Windows PID
   (`ps -W`, `cat /proc/PID/winpid`).
-* On Linux the last interval before a watched process exits is lost
-  (`/proc` is gone); Windows still delivers the final counters.
+* On Linux the last 100 ms before a watched process exits are lost
+  (`/proc` is gone); Windows still delivers the final counters. The `avg`
+  over the run can therefore be a little below the sampled rates.
+* Exact byte counts are printed with `_` between groups of three digits
+  (`930_086_912`); every modern number parser accepts that, so the value
+  survives copy and paste.
 * Closed standard descriptors are an error (`ppv <&-` exits with 1), they are
   never silently reused.
 * On POSIX, Ctrl-C and SIGTERM end ppv by re-raising the signal after the

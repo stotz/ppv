@@ -13,13 +13,17 @@ First release.
 
 ### Added
 
-- `cmd | ppv | cmd`: copies stdin to stdout and shows total, min, avg and max
-  rate over the last minute on stderr, redrawn in place once per interval.
+- `cmd | ppv | cmd`: copies stdin to stdout and shows total, min, avg, p90
+  and max rate over the last minute on stderr, labelled, with columns that
+  only grow so the line does not jump; redrawn in place once per interval.
+  Rates are sampled every 100 ms independently of the redraw interval.
 - `ppv --pid PID`: shows the read and write throughput of a running process
   (`/proc/PID/io` on Linux, `GetProcessIoCounters` on Windows).
 - `-s`: statistics at the end with rate percentiles (constant-memory log
-  histogram), time blocked on input vs. output with a bottleneck verdict, and
-  the transfer method.
+  histogram; printed from 10 samples on), time spent in read vs. in write
+  with their ratio and a bottleneck verdict, transfer count and average size,
+  and the transfer method. Exact byte counts are digit-grouped with `_`,
+  durations below a second are in milliseconds.
 - Options `-q`, `-f`, `-W`, `-i SEC`, `-N NAME`, `-B SIZE`; own parser without a
   getopt dependency.
 - Linux: zero-copy transfer with `splice()` through an intermediate pipe,

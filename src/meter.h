@@ -1,10 +1,14 @@
 /*
  * ppv - rate measurement.
  *
+ * Counters are sampled at a fixed period (PPV_SAMPLE_NS, 100 ms) regardless
+ * of how often the live line is drawn, so that short runs still yield a
+ * useful number of samples and all rates mean the same thing.
+ *
  * ppv_window: sliding window over the last minute for the live line.
  * ppv_stats:  constant-memory statistics over the whole run (min, max and
  *             percentiles from a log-scale histogram, ~6% resolution).
- * ppv_meter:  both, fed with (time, total) samples once per interval.
+ * ppv_meter:  both, fed with (time, total) samples.
  */
 #ifndef PPV_METER_H
 #define PPV_METER_H
@@ -13,9 +17,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define PPV_SAMPLE_NS     UINT64_C(100000000) /* 100 ms */
 #define PPV_WINDOW_NS     (UINT64_C(60) * UINT64_C(1000000000))
-#define PPV_WINDOW_CAP    640 /* > 60 s / 0.1 s minimum interval */
+#define PPV_WINDOW_CAP    640 /* > 60 s / 100 ms */
 #define PPV_STATS_BUCKETS 496
+
+/* Percentiles are only reported from this many samples on (one second). */
+#define PPV_PERCENTILE_MIN_SAMPLES 10
+
+/* Rates over a window: min and max of the per-sample rates, the 90th
+ * percentile of them, and avg = bytes / time over the whole window. */
+typedef struct ppv_rates {
+    double min;
+    double avg;
+    double p90;
+    double max;
+} ppv_rates;
 
 typedef struct ppv_window {
     uint64_t interval_ns;
@@ -27,8 +44,8 @@ typedef struct ppv_window {
 
 void ppv_window_init(ppv_window *w, uint64_t interval_ns);
 void ppv_window_push(ppv_window *w, uint64_t t_ns, uint64_t total);
-/* Rates between neighbouring samples; false if fewer than two samples. */
-bool ppv_window_rates(const ppv_window *w, double *min, double *avg, double *max);
+/* False if fewer than two samples (no rate yet). */
+bool ppv_window_rates(const ppv_window *w, ppv_rates *r);
 
 typedef struct ppv_stats {
     uint64_t n;

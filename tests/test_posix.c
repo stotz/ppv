@@ -247,7 +247,7 @@ static void test_signal(int sig)
     static char text[8192];
     text[0] = '\0';
     read_until(errp[0], '\r', text, sizeof text); /* first live line = sign of life */
-    EXPECT_CONTAINS(text, "[0B");
+    EXPECT_CONTAINS(text, "ppv[0B, min 0B/s, avg 0B/s, p90 0B/s, max 0B/s]");
     EXPECT_TRUE(kill(p, sig) == 0);
 
     int status = 0;
@@ -300,7 +300,7 @@ static void test_append(void)
     static char text[4096];
     read_all(errp[0], text, sizeof text);
     close(errp[0]);
-    EXPECT_CONTAINS(text, "(" SIZE " bytes)");
+    EXPECT_CONTAINS(text, "(3_000_000 bytes)");
 #if defined(__linux__)
     EXPECT_CONTAINS(text, "read/write"); /* the splice fallback was taken */
 #endif

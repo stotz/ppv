@@ -33,11 +33,37 @@ int main(void)
     ppv_fmt_rate(rate, sizeof rate, 17163834.0);
     EXPECT_STR(rate, "16.4M/s");
 
-    EXPECT_STR(dur(0), "0.0s");
+    /* Below a second in milliseconds, so that 18 ms does not read as "0.0s". */
+    EXPECT_STR(dur(0), "0ms");
+    EXPECT_STR(dur(0.0004), "0ms");
+    EXPECT_STR(dur(0.0006), "1ms");
+    EXPECT_STR(dur(0.018), "18ms");
+    EXPECT_STR(dur(0.1), "100ms");
+    EXPECT_STR(dur(0.9994), "999ms");
+    EXPECT_STR(dur(0.9996), "1.0s");
+    EXPECT_STR(dur(1.8), "1.8s");
     EXPECT_STR(dur(12.34), "12.3s");
+    EXPECT_STR(dur(59.94), "59.9s");
+    EXPECT_STR(dur(59.96), "1m00s");
     EXPECT_STR(dur(383), "6m23s");
     EXPECT_STR(dur(3723), "1h02m03s");
     EXPECT_STR(dur(2 * 86400 + 3 * 3600 + 4 * 60), "2d03h04m");
+
+    char g[32];
+    ppv_fmt_group(g, sizeof g, 0);
+    EXPECT_STR(g, "0");
+    ppv_fmt_group(g, sizeof g, 999);
+    EXPECT_STR(g, "999");
+    ppv_fmt_group(g, sizeof g, 1000);
+    EXPECT_STR(g, "1_000");
+    ppv_fmt_group(g, sizeof g, 930086912);
+    EXPECT_STR(g, "930_086_912");
+    ppv_fmt_group(g, sizeof g, UINT64_MAX);
+    EXPECT_STR(g, "18_446_744_073_709_551_615");
+    ppv_fmt_group(g, 5, 1234567); /* truncated, still terminated */
+    EXPECT_STR(g, "1_23");
+    ppv_fmt_group(g, 1, 7);
+    EXPECT_STR(g, "");
 
     return TEST_RESULT();
 }

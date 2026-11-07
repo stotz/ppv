@@ -35,6 +35,10 @@ void ppv_fmt_rate(char *buf, size_t cap, double bytes_per_sec)
 
 void ppv_fmt_duration(char *buf, size_t cap, uint64_t ns)
 {
+    if (ns < UINT64_C(999500000)) {
+        snprintf(buf, cap, "%" PRIu64 "ms", (ns + UINT64_C(500000)) / UINT64_C(1000000));
+        return;
+    }
     if (ns < UINT64_C(59950000000)) {
         snprintf(buf, cap, "%.1fs", (double)ns / 1e9);
         return;
@@ -49,4 +53,20 @@ void ppv_fmt_duration(char *buf, size_t cap, uint64_t ns)
         snprintf(buf, cap, "%" PRIu64 "h%02" PRIu64 "m%02" PRIu64 "s", h, m, s);
     else
         snprintf(buf, cap, "%" PRIu64 "m%02" PRIu64 "s", m, s);
+}
+
+void ppv_fmt_group(char *buf, size_t cap, uint64_t v)
+{
+    char digits[21];
+    int n = snprintf(digits, sizeof digits, "%" PRIu64, v);
+    size_t len = n < 0 ? 0 : (size_t)n;
+    size_t out = 0;
+    for (size_t i = 0; i < len && out + 1 < cap; i++) {
+        if (i > 0 && (len - i) % 3 == 0 && out + 1 < cap)
+            buf[out++] = '_';
+        if (out + 1 < cap)
+            buf[out++] = digits[i];
+    }
+    if (cap > 0)
+        buf[out] = '\0';
 }

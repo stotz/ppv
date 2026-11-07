@@ -105,7 +105,7 @@ static int wait_exit(proc_t p)
 }
 #endif
 
-/* "  write  11.4M (12000000 bytes), avg ..." -> 12000000 */
+/* "  write  11.4M (12_000_000 bytes), avg ..." -> 12000000 */
 static bool parse_bytes(const char *text, const char *label, uint64_t *out)
 {
     const char *p = strstr(text, label);
@@ -114,9 +114,17 @@ static bool parse_bytes(const char *text, const char *label, uint64_t *out)
     p = strchr(p, '(');
     if (p == NULL)
         return false;
-    char *end = NULL;
-    unsigned long long v = strtoull(p + 1, &end, 10);
-    if (end == p + 1 || strncmp(end, " bytes", 6) != 0)
+    uint64_t v = 0;
+    bool digits = false;
+    for (p++; *p != '\0'; p++) {
+        if (*p >= '0' && *p <= '9') {
+            v = v * 10 + (uint64_t)(*p - '0');
+            digits = true;
+        } else if (*p != '_') {
+            break;
+        }
+    }
+    if (!digits || strncmp(p, " bytes", 6) != 0)
         return false;
     *out = v;
     return true;

@@ -5,10 +5,10 @@
  *   ppv --pid PID [-s]        show the I/O throughput of a running process
  *
  * Threads: the transfer thread only moves data and bumps atomic counters;
- * the main thread samples them once per interval and draws the live line.
+ * the main thread samples them every PPV_SAMPLE_NS (100 ms) for the
+ * statistics and draws the live line every -i interval.
  */
 #include "display.h"
-#include "format.h"
 #include "meter.h"
 #include "options.h"
 #include "platform/platform.h"
@@ -48,32 +48,11 @@ static uint64_t next_deadline(uint64_t deadline, uint64_t now, uint64_t interval
     return deadline > now ? deadline : now + interval; /* skip missed ticks */
 }
 
-/* "105M, 12.3M/s, 45.6M/s, 98.7M/s"; cap >= 4 * 32 + 8 avoids any truncation. */
-static void render_counter(char *buf, size_t cap, uint64_t total, const ppv_window *w)
+/* Drawing is suppressed for a background job (the terminal would stop us
+ * with SIGTTOU, or garble the foreground job's output). */
+static bool can_draw(const ppv_display *d)
 {
-    char t[32], mn[32], av[32], mx[32];
-    double rmin, ravg, rmax;
-
-    ppv_fmt_size(t, sizeof t, (double)total);
-    if (!ppv_window_rates(w, &rmin, &ravg, &rmax)) {
-        snprintf(buf, cap, "%s, -, -, -", t);
-        return;
-    }
-    ppv_fmt_rate(mn, sizeof mn, rmin);
-    ppv_fmt_rate(av, sizeof av, ravg);
-    ppv_fmt_rate(mx, sizeof mx, rmax);
-    snprintf(buf, cap, "%s, %s, %s, %s", t, mn, av, mx);
-}
-
-/* Draws the live line, unless we are a background job (the terminal would
- * stop us with SIGTTOU, or garble the foreground job's output). */
-static void draw(ppv_display *d, const char *body, bool final)
-{
-    char line[PPV_LINE_BUF];
-    if (!d->enabled || !ppv_stderr_in_foreground())
-        return;
-    size_t n = ppv_display_render(d, body, final, ppv_stderr_columns(), line);
-    ppv_stderr_write(line, n);
+    return d->enabled && ppv_stderr_in_foreground();
 }
 
 /* ------------------------------------------------------------------------ */
@@ -86,10 +65,14 @@ static bool transfer_done(void *ctx, uint64_t timeout_ns)
 
 static void draw_transfer(ppv_display *d, uint64_t bytes, const ppv_meter *m, bool final)
 {
-    char counter[160], body[192];
-    render_counter(counter, sizeof counter, bytes, &m->window);
-    snprintf(body, sizeof body, "[%s]", counter);
-    draw(d, body, final);
+    char line[PPV_LINE_BUF];
+    ppv_rates rates;
+    if (!can_draw(d))
+        return;
+    bool have = ppv_window_rates(&m->window, &rates);
+    size_t n =
+        ppv_display_transfer(d, bytes, have ? &rates : NULL, final, ppv_stderr_columns(), line);
+    ppv_stderr_write(line, n);
 }
 
 static int report_transfer_error(const ppv_transfer *t)
@@ -132,19 +115,23 @@ static int run_transfer(const ppv_options *o, bool live)
         return PPV_EXIT_FAILURE;
     }
 
-    ppv_meter_init(&meter, o->interval_ns, start, 0);
+    ppv_meter_init(&meter, PPV_SAMPLE_NS, start, 0);
     ppv_display display;
     ppv_display_init(&display, live, o->name);
 
-    uint64_t deadline = start + o->interval_ns;
+    uint64_t deadline = start + PPV_SAMPLE_NS;
+    uint64_t next_draw = start + o->interval_ns;
     wake w;
     while ((w = wait_for_tick(deadline, transfer_done, &xfer)) == WAKE_TICK) {
         uint64_t now = ppv_now_ns();
         uint64_t bytes = ppv_atomic_load(&xfer.bytes);
         ppv_meter_sample(&meter, now, bytes);
-        if (!o->wait || bytes > 0)
-            draw_transfer(&display, bytes, &meter, false);
-        deadline = next_deadline(deadline, now, o->interval_ns);
+        if (now >= next_draw) {
+            if (!o->wait || bytes > 0)
+                draw_transfer(&display, bytes, &meter, false);
+            next_draw = next_deadline(next_draw, now, o->interval_ns);
+        }
+        deadline = next_deadline(deadline, now, PPV_SAMPLE_NS);
     }
 
     uint64_t end = ppv_now_ns();
@@ -168,9 +155,9 @@ static int run_transfer(const ppv_options *o, bool live)
             .interrupted = interrupted,
             .bytes = bytes,
             .elapsed_ns = end - start,
-            .interval_ns = o->interval_ns,
-            .blocked_in_ns = ppv_atomic_load(&xfer.blocked_in_ns),
-            .blocked_out_ns = ppv_atomic_load(&xfer.blocked_out_ns),
+            .sample_ns = PPV_SAMPLE_NS,
+            .in_read_ns = ppv_atomic_load(&xfer.blocked_in_ns),
+            .in_write_ns = ppv_atomic_load(&xfer.blocked_out_ns),
             .ops = ppv_atomic_load(&xfer.ops),
             .method = interrupted ? NULL : xfer.method,
             .rates = &meter.stats,
@@ -196,11 +183,15 @@ static bool process_done(void *ctx, uint64_t timeout_ns)
 static void draw_process(ppv_display *d, uint64_t r, const ppv_meter *mr, uint64_t w,
                          const ppv_meter *mw, bool final)
 {
-    char rc[160], wc[160], body[352];
-    render_counter(rc, sizeof rc, r, &mr->window);
-    render_counter(wc, sizeof wc, w, &mw->window);
-    snprintf(body, sizeof body, "[R %s | W %s]", rc, wc);
-    draw(d, body, final);
+    char line[PPV_LINE_BUF];
+    ppv_rates rr, wr;
+    if (!can_draw(d))
+        return;
+    bool have_r = ppv_window_rates(&mr->window, &rr);
+    bool have_w = ppv_window_rates(&mw->window, &wr);
+    size_t n = ppv_display_process(d, r, have_r ? &rr : NULL, w, have_w ? &wr : NULL, final,
+                                   ppv_stderr_columns(), line);
+    ppv_stderr_write(line, n);
 }
 
 static int run_process(const ppv_options *o, bool live)
@@ -222,13 +213,14 @@ static int run_process(const ppv_options *o, bool live)
     }
 
     uint64_t start = ppv_now_ns();
-    ppv_meter_init(&mread, o->interval_ns, start, 0);
-    ppv_meter_init(&mwrite, o->interval_ns, start, 0);
+    ppv_meter_init(&mread, PPV_SAMPLE_NS, start, 0);
+    ppv_meter_init(&mwrite, PPV_SAMPLE_NS, start, 0);
     ppv_display display;
     ppv_display_init(&display, live, o->name);
 
     uint64_t r = 0, w = 0, cr, cw;
-    uint64_t deadline = start + o->interval_ns;
+    uint64_t deadline = start + PPV_SAMPLE_NS;
+    uint64_t next_draw = start + o->interval_ns;
     wake wk;
     while ((wk = wait_for_tick(deadline, process_done, p)) == WAKE_TICK) {
         uint64_t now = ppv_now_ns();
@@ -238,9 +230,12 @@ static int run_process(const ppv_options *o, bool live)
         }
         ppv_meter_sample(&mread, now, r);
         ppv_meter_sample(&mwrite, now, w);
-        if (!o->wait || r > 0 || w > 0)
-            draw_process(&display, r, &mread, w, &mwrite, false);
-        deadline = next_deadline(deadline, now, o->interval_ns);
+        if (now >= next_draw) {
+            if (!o->wait || r > 0 || w > 0)
+                draw_process(&display, r, &mread, w, &mwrite, false);
+            next_draw = next_deadline(next_draw, now, o->interval_ns);
+        }
+        deadline = next_deadline(deadline, now, PPV_SAMPLE_NS);
     }
 
     /* Windows still delivers the final counters of an exited process; on
@@ -264,7 +259,7 @@ static int run_process(const ppv_options *o, bool live)
             .interrupted = interrupted,
             .pid = o->pid,
             .elapsed_ns = end - start,
-            .interval_ns = o->interval_ns,
+            .sample_ns = PPV_SAMPLE_NS,
             .read_bytes = r,
             .write_bytes = w,
             .read_rates = &mread.stats,

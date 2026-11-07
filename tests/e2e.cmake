@@ -2,6 +2,7 @@
 
 # 48 MiB + an odd tail, so the last read is a partial buffer.
 set(SIZE 50331709)
+set(SIZE_GROUPED "50_331_709") # as the statistics print it (ppv_fmt_group)
 
 function(fail msg)
   message(FATAL_ERROR "${MODE}: ${msg}")
@@ -18,10 +19,10 @@ if(MODE STREQUAL "pipe")
   if(NOT rcs STREQUAL "0;0;0")
     fail("exit codes ${rcs}\n${err}")
   endif()
-  if(NOT err MATCHES "\\(${SIZE} bytes\\)")
+  if(NOT err MATCHES "\\(${SIZE_GROUPED} bytes\\)")
     fail("statistics missing or wrong:\n${err}")
   endif()
-  if(NOT err MATCHES "waiting  input")
+  if(NOT err MATCHES "  time     in read .* in write .*: " OR NOT err MATCHES "  io       [0-9]+ transfers")
     fail("statistics incomplete:\n${err}")
   endif()
 
@@ -83,7 +84,7 @@ elseif(MODE STREQUAL "live")
   if(NOT rcs STREQUAL "0;0;0")
     fail("exit codes ${rcs}\n${err}")
   endif()
-  if(NOT err MATCHES "^job: \\[")
+  if(NOT err MATCHES "^job\\[")
     fail("live line does not start with the name:\n${err}")
   endif()
   if(NOT err MATCHES "\\]\r" OR NOT err MATCHES "\\]\n$")
@@ -136,7 +137,7 @@ elseif(MODE STREQUAL "buffer")
       COMMAND "${CHECK}" ${SIZE}
       RESULTS_VARIABLE rcs
       ERROR_VARIABLE err)
-    if(NOT rcs STREQUAL "0;0;0" OR NOT err MATCHES "\\(${SIZE} bytes\\)")
+    if(NOT rcs STREQUAL "0;0;0" OR NOT err MATCHES "\\(${SIZE_GROUPED} bytes\\)")
       fail("-B ${size}: exit codes ${rcs}\n${err}")
     endif()
   endforeach()

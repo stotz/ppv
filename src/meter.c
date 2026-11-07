@@ -1,5 +1,6 @@
 #include "meter.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------------ */
@@ -36,27 +37,37 @@ void ppv_window_push(ppv_window *w, uint64_t t_ns, uint64_t total)
     }
 }
 
-bool ppv_window_rates(const ppv_window *w, double *min, double *avg, double *max)
+static int compare_double(const void *x, const void *y)
+{
+    double a = *(const double *)x, b = *(const double *)y;
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+bool ppv_window_rates(const ppv_window *w, ppv_rates *r)
 {
     if (w->count < 2)
         return false;
 
-    double lo = 0.0, hi = 0.0;
+    /* Per-sample rates, sorted for min, p90 and max. At most 640 doubles
+     * once per drawn line: negligible. */
+    double rates[PPV_WINDOW_CAP];
+    size_t n = 0;
     for (size_t k = 1; k < w->count; k++) {
         size_t a = at(w, k - 1), b = at(w, k);
         double dt = (double)(w->t[b] - w->t[a]) / 1e9;
-        double r = dt > 0.0 ? (double)(w->v[b] - w->v[a]) / dt : 0.0;
-        if (k == 1 || r < lo)
-            lo = r;
-        if (k == 1 || r > hi)
-            hi = r;
+        rates[n++] = dt > 0.0 ? (double)(w->v[b] - w->v[a]) / dt : 0.0;
     }
+    qsort(rates, n, sizeof rates[0], compare_double);
+
+    /* Nearest-rank percentile: the smallest value with >= 90 % of the samples at or below it. */
+    size_t rank = (9 * n + 9) / 10; /* ceil(0.9 n), >= 1 */
 
     size_t a = w->first, b = at(w, w->count - 1);
     double span = (double)(w->t[b] - w->t[a]) / 1e9;
-    *min = lo;
-    *max = hi;
-    *avg = span > 0.0 ? (double)(w->v[b] - w->v[a]) / span : 0.0;
+    r->min = rates[0];
+    r->max = rates[n - 1];
+    r->p90 = rates[rank - 1];
+    r->avg = span > 0.0 ? (double)(w->v[b] - w->v[a]) / span : 0.0;
     return true;
 }
 

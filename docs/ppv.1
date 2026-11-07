@@ -23,23 +23,30 @@ There is no progress bar and no estimated time:
 .B ppv
 cannot know the size of a stream and does not pretend to.
 .PP
-The live line is updated once per
+The live line is redrawn once per
 .I interval
-(default 1 second) and redrawn in place with a carriage return. It is only
-shown when standard error is a terminal (see
+(default 1 second) in place with a carriage return. It is only shown when
+standard error is a terminal (see
 .BR \-f ).
 .PP
 .EX
-[105M, 12.3M/s, 45.6M/s, 98.7M/s]
+ppv[887M, min 474M/s, avg 504M/s, p90 533M/s, max 545M/s]
 .EE
 .PP
-is the total so far, then the minimum, average and maximum rate over the last
-minute. With
+is the total so far, then the minimum, the average (bytes divided by time),
+the 90th percentile and the maximum of the rates over the last minute. The
+rates are sampled every 100 ms, whatever the redraw interval is. Every number
+is right-aligned to the widest value it has shown so far, so the labels do
+not move while the values change. With
+.B \-N
+the name replaces the
+.B ppv
+label. With
 .B \-\-pid
-the line shows both directions:
+the line shows the total and the average rate of each direction:
 .PP
 .EX
-[R 0B, 0B/s, 0B/s, 0B/s | W 3.84G, 1.06G/s, 1.11G/s, 1.14G/s]
+ppv[R 0B avg 0B/s | W 3.84G avg 1.11G/s]
 .EE
 .PP
 Sizes use binary units (K = 1024) with at most three significant digits.
@@ -62,13 +69,14 @@ Show nothing until the first byte has arrived (with
 until the process has read or written something).
 .TP
 .BR \-i ", " \-\-interval " " \fISEC\fR
-Update interval in seconds, 0.1 to 60, as a plain decimal number
-(default 1). The interval is also the sampling period of the statistics.
+Redraw interval in seconds, 0.1 to 60, as a plain decimal number
+(default 1). It does not affect the measurement: rates are always sampled
+every 100 ms.
 .TP
 .BR \-N ", " \-\-name " " \fINAME\fR
-Prefix the live line and the statistics with
-.IR NAME
-(at most 128 characters), useful when several
+Label the live line and the statistics
+.I NAME
+instead of "ppv" (at most 128 characters), useful when several
 .B ppv
 run in one pipeline. An empty name is ignored.
 .TP
@@ -104,27 +112,34 @@ With
 the following is printed when the transfer ends:
 .PP
 .EX
-ppv: 20.0M (20971520 bytes) in 3.1s, avg 6.51M/s
-  rate     min 0B/s, p50 0B/s, p90 62.0K/s, max 64.0K/s (3 x 1.0s)
-  waiting  input 0.0s (1%), output 3.0s (99%): the consumer (output side) is the bottleneck
-  io       389 transfers, avg 52.6K, splice
+ppv: 887M (930_086_912 bytes) in 1.8s, avg 504M/s
+  rate     min 474M/s, p50 486M/s, p90 533M/s, max 545M/s (18 samples of 100ms)
+  time     in read 1.7s (99%), in write 18ms (1%): the producer (input side) is the bottleneck (94:1)
+  io       887 transfers, avg 1.00M, ReadFile/WriteFile
 .EE
+.PP
+The exact byte count is printed with an underscore between groups of three
+digits; number parsers of current languages accept it as is.
 .TP
 .B rate
-Minimum, median, 90th percentile and maximum of the per-interval rates, and
-how many intervals were measured. The percentiles come from a logarithmic
-histogram with about 6% resolution.
+Minimum, median, 90th percentile and maximum of the 100 ms samples, and how
+many there were. The percentiles come from a logarithmic histogram with about
+6% resolution and are only printed from 10 samples (one second) on; shorter
+runs show minimum and maximum only.
 .TP
-.B waiting
+.B time
 How long
 .B ppv
-was blocked reading (the producer was slower) and writing (the consumer was
-slower), as time and as share of the run time. One side is named as the
+spent inside its read calls (waiting for the producer) and inside its write
+calls (waiting for the consumer), as time and as share of the run time. A
+filter has no work of its own, so the two add up to the run time; the ratio
+in brackets says how much slower one side was. One side is named as the
 bottleneck when it accounts for at least half of the run time and more than
-the other side.
+the other side. Durations below one second are given in milliseconds.
 .TP
 .B io
-Number of read/write cycles, their average size, and the transfer method:
+Number of read/write cycles and their average size, which in a pipe is the
+write size of the producer, and the transfer method:
 .B splice
 (Linux, zero copy),
 .B read/write
@@ -138,7 +153,7 @@ After an interruption the first line ends with
 .SH WATCHING A PROCESS
 .B ppv \-\-pid
 .I PID
-reads the I/O counters of another process once per interval:
+reads the I/O counters of another process every 100 ms:
 .IR /proc/PID/io
 .RB ( rchar ", " wchar )
 on Linux,
@@ -149,8 +164,8 @@ sockets. Watching ends when the process exits, or with Ctrl-C.
 Linux needs a kernel with I/O accounting
 .RB ( CONFIG_TASK_IO_ACCOUNTING ,
 standard on distribution kernels, missing on WSL2) and permission to read the
-process (same user, or root). The last partial interval before the process
-exits is lost, because
+process (same user, or root). The last 100 ms before the process exits are
+lost, because
 .I /proc
 is gone by then; Windows still delivers the final counters. Other POSIX
 systems are not supported.
