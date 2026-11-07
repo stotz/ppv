@@ -14,7 +14,7 @@
 static const char help_text[] =
     "Usage: cmd | ppv [OPTION]... | cmd\n"
     "       ppv --pid PID [OPTION]...\n"
-    "Copy standard input to standard output and show the throughput on standard error.\n"
+    "Copy standard input to standard output, show the throughput on standard error.\n"
     "\n"
     "Live line: ppv[total, min, avg, p90, max] - rates over the last minute,\n"
     "sampled every 0.1 s. -N replaces the \"ppv\" label.\n"
@@ -23,7 +23,7 @@ static const char help_text[] =
     "  -q, --quiet             no live line\n"
     "  -f, --force             live line even if stderr is not a terminal\n"
     "  -W, --wait              show nothing until the first byte has arrived\n"
-    "  -i, --interval SEC      redraw interval, 0.1 to 60 seconds in steps of 0.1 (default 1)\n"
+    "  -i, --interval SEC      redraw interval, 0.1-60 s in 0.1 steps (default 1)\n"
     "  -N, --name NAME         label the output NAME (at most 128 characters)\n"
     "  -B, --buffer-size SIZE  transfer buffer, 4K to 256M (default 1M)\n"
     "  -p, --pid PID           watch the I/O of process PID instead of copying\n"
