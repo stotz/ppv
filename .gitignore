@@ -53,3 +53,14 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# CMake build trees (presets, CLion, Visual Studio)
+/build/
+/out/
+/cmake-build-*/
+CMakeUserPresets.json
+
+# IDEs
+/.idea/
+/.vs/
+/.vscode/

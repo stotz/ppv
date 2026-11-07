@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Native toolchains on all supported platforms: build, unit + end-to-end tests,
+  # then a smoke test of the installed binary in a real pipe.
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-gcc,     os: ubuntu-latest,    cc: gcc,   werror: ON }
+          - { name: linux-clang,   os: ubuntu-latest,    cc: clang, werror: ON }
+          - { name: linux-arm64,   os: ubuntu-24.04-arm, cc: gcc,   werror: ON }
+          - { name: macos,         os: macos-latest,     cc: clang, werror: ON }
+          # MSVC: warnings visible but not fatal until the first clean run
+          - { name: windows-msvc,  os: windows-latest,   cc: "",    werror: OFF }
+          - { name: windows-arm64, os: windows-11-arm,   cc: "",    werror: OFF }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DPPV_WARNINGS_AS_ERRORS=${{ matrix.werror }}
+          ${{ matrix.cc && format('-DCMAKE_C_COMPILER={0}', matrix.cc) || '' }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Install
+        run: cmake --install build --config Release --prefix stage
+
+      - name: Smoke test
+        run: |
+          stage/bin/ppv --version
+          head -c 200000000 /dev/zero | stage/bin/ppv -q -s | cat > /dev/null
+
+  # MinGW-w64 / UCRT64 as used locally (MSYS2), with the debug preset (-Werror).
+  windows-mingw:
+    name: windows-mingw
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - run: cmake --preset debug
+      - run: cmake --build --preset debug
+      - run: ctest --preset debug
+
+  # Memory errors, undefined behaviour and data races between the threads.
+  sanitizers:
+    name: sanitizer-${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: address-undefined, flags: "-fsanitize=address,undefined -fno-sanitize-recover=all" }
+          - { name: thread,            flags: "-fsanitize=thread" }
+    env:
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow TSan with high-entropy ASLR
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          "-DCMAKE_C_FLAGS=${{ matrix.flags }} -fno-omit-frame-pointer"
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure

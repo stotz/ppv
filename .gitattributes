@@ -1,0 +1,14 @@
+# Store text with LF in the repository and check it out with LF everywhere,
+# independent of core.autocrlf. Keeps CI (Linux/macOS/Windows) and editors consistent.
+* text=auto eol=lf
+
+# Windows scripts need CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.png binary
+*.ico binary
+*.exe binary
+*.zip binary
+*.gz  binary

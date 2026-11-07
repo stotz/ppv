@@ -1,0 +1,99 @@
+name: Release
+
+# Push a tag that matches the project version, e.g.:
+#   git tag -a v0.1.0 -m "ppv 0.1.0" && git push origin v0.1.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write     # Sigstore certificate for the attestation
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Oldest supported Ubuntu = widest glibc compatibility.
+          - { target: linux-x64,     os: ubuntu-22.04 }
+          - { target: linux-arm64,   os: ubuntu-22.04-arm }
+          - { target: macos-universal, os: macos-latest, osx_arch: "arm64;x86_64" }
+          # MSVC with static runtime: depends on kernel32 only.
+          - { target: windows-x64,   os: windows-latest }
+          - { target: windows-arm64, os: windows-11-arm }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test
+        env:
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.osx_arch }} # read by CMake; empty elsewhere
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --parallel
+          ctest --test-dir build -C Release --output-on-failure
+          cmake --install build --config Release --prefix stage
+
+      - name: Check that the tag matches the project version
+        run: |
+          version="$(stage/bin/ppv --version | cut -d' ' -f2)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match project version $version (CMakeLists.txt)"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          name="ppv-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp stage/bin/ppv* README.md LICENSE "dist/$name/"
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake -E tar cf "$name.zip" --format=zip "$name"
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+          rm -r "$name"
+
+      # Signed build provenance: proves the archive was built by this workflow
+      # from this commit. Verify with: gh attestation verify FILE -R stotz/ppv
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "ppv $GITHUB_REF_NAME"
+          --generate-notes
+          --verify-tag
