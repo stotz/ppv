@@ -50,9 +50,10 @@ static double percent(uint64_t part, uint64_t whole)
 }
 
 /* "min 474M/s, p50 486M/s, p90 533M/s, max 545M/s (18 samples of 100ms)".
- * Percentiles from a histogram with 6 % resolution are only quoted once
- * there are enough samples for them to mean something. */
-static void rate_summary(char *buf, size_t cap, const ppv_stats *s, uint64_t sample_ns)
+ * Percentiles are only quoted once there are enough samples for them to
+ * mean something; a "~" marks values from the histogram (runs longer than
+ * the window; about 6 % resolution). */
+static void rate_summary(char *buf, size_t cap, const ppv_rate_summary *s, uint64_t sample_ns)
 {
     if (s->n == 0) {
         snprintf(buf, cap, "no samples");
@@ -67,19 +68,20 @@ static void rate_summary(char *buf, size_t cap, const ppv_stats *s, uint64_t sam
                  mn, mx, s->n, s->n == 1 ? "" : "s", iv);
         return;
     }
-    ppv_fmt_rate(p50, sizeof p50, ppv_stats_percentile(s, 0.50));
-    ppv_fmt_rate(p90, sizeof p90, ppv_stats_percentile(s, 0.90));
-    snprintf(buf, cap, "min %s, p50 %s, p90 %s, max %s (%" PRIu64 " samples of %s)", mn, p50, p90,
-             mx, s->n, iv);
+    ppv_fmt_rate(p50, sizeof p50, s->p50);
+    ppv_fmt_rate(p90, sizeof p90, s->p90);
+    const char *about = s->approximate ? "~" : "";
+    snprintf(buf, cap, "min %s, p50 %s%s, p90 %s%s, max %s (%" PRIu64 " samples of %s)", mn, about,
+             p50, about, p90, mx, s->n, iv);
 }
 
 const char *ppv_report_bottleneck(double in_pct, double out_pct)
 {
     if (out_pct >= 50.0 && out_pct > in_pct)
-        return "the consumer (output side) is the bottleneck";
+        return "consumer-bound";
     if (in_pct >= 50.0 && in_pct > out_pct)
-        return "the producer (input side) is the bottleneck";
-    return "no single bottleneck";
+        return "producer-bound";
+    return "balanced";
 }
 
 void ppv_report_ratio(char *buf, size_t cap, uint64_t a_ns, uint64_t b_ns)
@@ -123,7 +125,7 @@ size_t ppv_report_transfer(const ppv_transfer_report *r, char *buf, size_t cap)
     ppv_fmt_duration(tin, sizeof tin, r->in_read_ns);
     ppv_fmt_duration(tout, sizeof tout, r->in_write_ns);
     ppv_report_ratio(ratio, sizeof ratio, r->in_read_ns, r->in_write_ns);
-    emit(&s, "  time     in read %s (%.0f%%), in write %s (%.0f%%): %s%s%s%s\n", tin, in_pct, tout,
+    emit(&s, "  time     read %s (%.0f%%), write %s (%.0f%%): %s%s%s%s\n", tin, in_pct, tout,
          out_pct, ppv_report_bottleneck(in_pct, out_pct), ratio[0] != '\0' ? " (" : "", ratio,
          ratio[0] != '\0' ? ")" : "");
 
@@ -134,7 +136,7 @@ size_t ppv_report_transfer(const ppv_transfer_report *r, char *buf, size_t cap)
 }
 
 static void report_direction(sink *s, const char *label, uint64_t bytes, uint64_t elapsed_ns,
-                             const ppv_stats *st, uint64_t sample_ns)
+                             const ppv_rate_summary *st, uint64_t sample_ns)
 {
     char total[32], exact[32], avg[32], rates[256];
     ppv_fmt_size(total, sizeof total, (double)bytes);

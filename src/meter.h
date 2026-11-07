@@ -77,4 +77,19 @@ void ppv_meter_sample(ppv_meter *m, uint64_t t_ns, uint64_t total);
 /* Adds the last, partial interval if it is long enough to be meaningful. */
 void ppv_meter_finish(ppv_meter *m, uint64_t t_ns, uint64_t total);
 
+/* Whole-run summary for the report. While every sample of the run is still
+ * in the window (runs up to a minute) the percentiles are exact, the same
+ * values the live line shows; longer runs use the histogram (approximate,
+ * about 6 % resolution). */
+typedef struct ppv_rate_summary {
+    uint64_t n;
+    double min;
+    double p50;
+    double p90;
+    double max;
+    bool approximate; /* percentiles from the histogram */
+} ppv_rate_summary;
+
+void ppv_meter_summary(const ppv_meter *m, ppv_rate_summary *s);
+
 #endif

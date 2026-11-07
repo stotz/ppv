@@ -114,6 +114,37 @@ int main(void)
     EXPECT_TRUE(m.stats.n == UINT64_C(3) * PPV_WINDOW_CAP);
     EXPECT_NEAR(ppv_stats_percentile(&m.stats, 0.5), 1000, 1000 * 0.07);
 
+    /* Whole-run summary: exact (and equal to the live p90) while every
+     * sample is still in the window, from the histogram once the window
+     * has evicted something. */
+    ppv_rate_summary sum;
+    ppv_meter_init(&m, PPV_SAMPLE_NS, 0, 0);
+    ppv_meter_summary(&m, &sum);
+    EXPECT_TRUE(sum.n == 0 && !sum.approximate);
+    total = 0;
+    for (uint64_t k = 1; k <= 20; k++) {
+        total += k * 1000; /* rates 10K, 20K, ..., 200K B/s */
+        ppv_meter_sample(&m, k * PPV_SAMPLE_NS, total);
+    }
+    ppv_meter_summary(&m, &sum);
+    EXPECT_TRUE(sum.n == 20 && !sum.approximate);
+    EXPECT_NEAR(sum.min, 10000, 1e-6);
+    EXPECT_NEAR(sum.max, 200000, 1e-6);
+    EXPECT_NEAR(sum.p50, 100000, 1e-6); /* exact: 10th of 20 */
+    EXPECT_NEAR(sum.p90, 180000, 1e-6); /* exact: 18th of 20 */
+    EXPECT_TRUE(ppv_window_rates(&m.window, &r));
+    EXPECT_NEAR(r.p90, sum.p90, 1e-9); /* live line and report agree */
+    /* keep sampling past the window: histogram, marked approximate */
+    for (uint64_t k = 21; k <= 700; k++) {
+        total += 100000;
+        ppv_meter_sample(&m, k * PPV_SAMPLE_NS, total);
+    }
+    ppv_meter_summary(&m, &sum);
+    EXPECT_TRUE(sum.n == 700 && sum.approximate);
+    EXPECT_NEAR(sum.p50, 1000000, 1000000 * 0.07);
+    EXPECT_NEAR(sum.p90, 1000000, 1000000 * 0.07);
+    EXPECT_NEAR(sum.min, 10000, 1e-6);
+
     /* Histogram buckets: monotonic, in range, and the middle is within one
      * sub-bucket (1/8 of the power of two) of the value. */
     static const uint64_t probes[] = {0,

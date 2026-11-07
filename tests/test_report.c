@@ -11,12 +11,12 @@ static char text[PPV_REPORT_BUF];
 int main(void)
 {
     /* Bottleneck: needs >= 50 % on one side and more than the other */
-    EXPECT_STR(ppv_report_bottleneck(1.0, 99.0), "the consumer (output side) is the bottleneck");
-    EXPECT_STR(ppv_report_bottleneck(80.0, 10.0), "the producer (input side) is the bottleneck");
-    EXPECT_STR(ppv_report_bottleneck(50.0, 10.0), "the producer (input side) is the bottleneck");
-    EXPECT_STR(ppv_report_bottleneck(49.9, 10.0), "no single bottleneck");
-    EXPECT_STR(ppv_report_bottleneck(50.0, 50.0), "no single bottleneck");
-    EXPECT_STR(ppv_report_bottleneck(0.0, 0.0), "no single bottleneck");
+    EXPECT_STR(ppv_report_bottleneck(1.0, 99.0), "consumer-bound");
+    EXPECT_STR(ppv_report_bottleneck(80.0, 10.0), "producer-bound");
+    EXPECT_STR(ppv_report_bottleneck(50.0, 10.0), "producer-bound");
+    EXPECT_STR(ppv_report_bottleneck(49.9, 10.0), "balanced");
+    EXPECT_STR(ppv_report_bottleneck(50.0, 50.0), "balanced");
+    EXPECT_STR(ppv_report_bottleneck(0.0, 0.0), "balanced");
 
     /* Ratio of the two sides, larger first; empty if one side is zero */
     char ratio[32];
@@ -38,11 +38,8 @@ int main(void)
     EXPECT_STR(ratio, "");
 
     /* Transfer report, the example from the README (31 samples of 100 ms) */
-    ppv_stats rates;
-    ppv_stats_init(&rates);
-    ppv_stats_add(&rates, 0.0);
-    for (int i = 0; i < 30; i++)
-        ppv_stats_add(&rates, i < 15 ? 63488.0 : 65536.0);
+    ppv_rate_summary rates = {
+        .n = 31, .min = 0.0, .p50 = 63488.0, .p90 = 65536.0, .max = 65536.0, .approximate = false};
     ppv_transfer_report r = {
         .name = NULL,
         .interrupted = false,
@@ -58,37 +55,38 @@ int main(void)
     size_t n = ppv_report_transfer(&r, text, sizeof text);
     EXPECT_EQ(n, strlen(text));
     EXPECT_CONTAINS(text, "ppv: 20.0M (20_971_520 bytes) in 3.1s, avg 6.45M/s\n");
-    EXPECT_CONTAINS(text, "  rate     min 0B/s, p50 ");
-    EXPECT_CONTAINS(text, ", max 64.0K/s (31 samples of 100ms)\n");
-    EXPECT_CONTAINS(text, "  time     in read 31ms (1%), in write 3.0s (97%): "
-                          "the consumer (output side) is the bottleneck (97:1)\n");
+    EXPECT_CONTAINS(
+        text, "  rate     min 0B/s, p50 62.0K/s, p90 64.0K/s, max 64.0K/s (31 samples of 100ms)\n");
+    EXPECT_CONTAINS(text, "  time     read 31ms (1%), write 3.0s (97%): consumer-bound (97:1)\n");
     EXPECT_CONTAINS(text, "  io       389 transfers, avg 52.6K, splice\n");
     EXPECT_TRUE(strstr(text, "interrupted") == NULL);
     EXPECT_EQ(text[n - 1], '\n');
 
     /* Too few samples: min and max only, and it says so */
-    ppv_stats few;
-    ppv_stats_init(&few);
-    few.n = 0;
+    ppv_rate_summary few = {
+        .n = 1, .min = 474e6, .p50 = 474e6, .p90 = 474e6, .max = 474e6, .approximate = false};
     r.rates = &few;
-    ppv_stats_add(&few, 474e6);
     (void)ppv_report_transfer(&r, text, sizeof text);
     EXPECT_CONTAINS(
         text, "  rate     min 452M/s, max 452M/s (1 sample of 100ms, too few for percentiles)\n");
-    for (int i = 0; i < 8; i++)
-        ppv_stats_add(&few, 500e6);
+    few.n = 9;
+    few.max = 500e6;
     (void)ppv_report_transfer(&r, text, sizeof text);
     EXPECT_CONTAINS(text, "(9 samples of 100ms, too few for percentiles)\n");
     EXPECT_TRUE(strstr(text, "p50") == NULL);
-    ppv_stats_add(&few, 500e6); /* the tenth: percentiles appear */
+    few.n = 10; /* the tenth: percentiles appear */
     (void)ppv_report_transfer(&r, text, sizeof text);
-    EXPECT_CONTAINS(text, ", p50 ");
-    EXPECT_CONTAINS(text, "(10 samples of 100ms)\n");
+    EXPECT_CONTAINS(text, ", p50 452M/s, p90 452M/s, max 477M/s (10 samples of 100ms)\n");
+
+    /* Histogram-based percentiles (runs longer than the window) are marked "~" */
+    few.n = 800;
+    few.approximate = true;
+    (void)ppv_report_transfer(&r, text, sizeof text);
+    EXPECT_CONTAINS(text, ", p50 ~452M/s, p90 ~452M/s, max 477M/s (800 samples of 100ms)\n");
     r.rates = &rates;
 
     /* Name, interrupted, no method, no samples */
-    ppv_stats none;
-    ppv_stats_init(&none);
+    ppv_rate_summary none = {0};
     r.name = "job";
     r.interrupted = true;
     r.method = NULL;
@@ -109,10 +107,10 @@ int main(void)
     r.bytes = 0;
     (void)ppv_report_transfer(&r, text, sizeof text);
     EXPECT_CONTAINS(text, "ppv: 0B (0 bytes) in 0ms, avg 0B/s");
-    EXPECT_CONTAINS(text, "in read 31ms (0%), in write 3.0s (0%): no single bottleneck (97:1)");
+    EXPECT_CONTAINS(text, "read 31ms (0%), write 3.0s (0%): balanced (97:1)");
     r.in_read_ns = 0;
     (void)ppv_report_transfer(&r, text, sizeof text);
-    EXPECT_CONTAINS(text, "in read 0ms (0%), in write 3.0s (0%): no single bottleneck\n");
+    EXPECT_CONTAINS(text, "read 0ms (0%), write 3.0s (0%): balanced\n");
 
     /* Truncation: always NUL terminated, length reported honestly */
     char small[40];
@@ -124,13 +122,8 @@ int main(void)
     EXPECT_STR(small, "");
 
     /* Process report */
-    ppv_stats rd, wr;
-    ppv_stats_init(&rd);
-    ppv_stats_init(&wr);
-    for (int i = 0; i < 120; i++) {
-        ppv_stats_add(&rd, 1e6);
-        ppv_stats_add(&wr, 2e6);
-    }
+    ppv_rate_summary rd = {.n = 120, .min = 1e6, .p50 = 1e6, .p90 = 1e6, .max = 1e6};
+    ppv_rate_summary wr = {.n = 120, .min = 2e6, .p50 = 2e6, .p90 = 2e6, .max = 2e6};
     ppv_process_report p = {
         .name = NULL,
         .interrupted = false,

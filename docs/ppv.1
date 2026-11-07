@@ -70,8 +70,9 @@ until the process has read or written something).
 .TP
 .BR \-i ", " \-\-interval " " \fISEC\fR
 Redraw interval in seconds, 0.1 to 60, as a plain decimal number
-(default 1). It does not affect the measurement: rates are always sampled
-every 100 ms.
+(default 1), rounded to the nearest multiple of 0.1 (0.15 becomes 0.2). It
+does not affect the measurement: rates are always sampled every 100 ms, and
+the line can only be redrawn on such a sample.
 .TP
 .BR \-N ", " \-\-name " " \fINAME\fR
 Label the live line and the statistics
@@ -114,7 +115,7 @@ the following is printed when the transfer ends:
 .EX
 ppv: 887M (930_086_912 bytes) in 1.8s, avg 504M/s
   rate     min 474M/s, p50 486M/s, p90 533M/s, max 545M/s (18 samples of 100ms)
-  time     in read 1.7s (99%), in write 18ms (1%): the producer (input side) is the bottleneck (94:1)
+  time     read 1.7s (99%), write 18ms (1%): producer-bound (94:1)
   io       887 transfers, avg 1.00M, ReadFile/WriteFile
 .EE
 .PP
@@ -123,9 +124,13 @@ digits; number parsers of current languages accept it as is.
 .TP
 .B rate
 Minimum, median, 90th percentile and maximum of the 100 ms samples, and how
-many there were. The percentiles come from a logarithmic histogram with about
-6% resolution and are only printed from 10 samples (one second) on; shorter
-runs show minimum and maximum only.
+many there were. For runs of up to a minute the percentiles are exact and
+the same as on the live line; for longer runs they come from a logarithmic
+histogram with about 6% resolution and are marked with a tilde
+.RB ( p50\ ~248M/s ).
+They are only printed from 10 samples (one second) on; shorter runs show
+minimum and maximum only. Minimum and maximum are 100 ms values, so a stall
+or a burst of 100 ms shows.
 .TP
 .B time
 How long
@@ -133,9 +138,14 @@ How long
 spent inside its read calls (waiting for the producer) and inside its write
 calls (waiting for the consumer), as time and as share of the run time. A
 filter has no work of its own, so the two add up to the run time; the ratio
-in brackets says how much slower one side was. One side is named as the
-bottleneck when it accounts for at least half of the run time and more than
-the other side. Durations below one second are given in milliseconds.
+in brackets says how much slower one side was. The verdict is
+.B producer-bound
+or
+.B consumer-bound
+when that side accounts for at least half of the run time and more than the
+other side, otherwise
+.BR balanced .
+Durations below one second are given in milliseconds.
 .TP
 .B io
 Number of read/write cycles and their average size, which in a pipe is the

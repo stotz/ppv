@@ -37,17 +37,21 @@ Statistics with `-s` at the end:
 ```
 ppv: 887M (930_086_912 bytes) in 1.8s, avg 504M/s
   rate     min 474M/s, p50 486M/s, p90 533M/s, max 545M/s (18 samples of 100ms)
-  time     in read 1.7s (99%), in write 18ms (1%): the producer (input side) is the bottleneck (94:1)
+  time     read 1.7s (99%), write 18ms (1%): producer-bound (94:1)
   io       887 transfers, avg 1.00M, ReadFile/WriteFile
 ```
 
-* `rate`: percentiles of the 100 ms samples, from a log histogram with about
-  6 % resolution. With fewer than 10 samples (one second) only min and max
-  are printed; there is no point in a p90 of three values.
+* `rate`: min, median, p90 and max of the 100 ms samples. For runs up to a
+  minute the percentiles are exact and identical to the live line; longer
+  runs use a log histogram with about 6 % resolution, marked `~`. With fewer
+  than 10 samples (one second) only min and max are printed; there is no
+  point in a p90 of three values. min and max are 100 ms values: a stall or
+  a burst of 100 ms shows, which is intended.
 * `time`: how long ppv spent inside its read and write calls, i.e. waiting
   for the producer and for the consumer. A filter has no work of its own, so
   the two shares add up to the run time; the ratio in brackets is what
-  matters, and the verdict names the slower side.
+  matters. `producer-bound`: the input side is slower; `consumer-bound`: the
+  output side; `balanced`: neither side accounts for half of the time.
 * `io`: number of read/write cycles and their average size – the write size
   of the producer, in effect – and how the bytes were moved.
 
@@ -59,7 +63,7 @@ ppv: 887M (930_086_912 bytes) in 1.8s, avg 504M/s
 | `-q`, `--quiet` | no live line |
 | `-f`, `--force` | live line even if stderr is not a terminal |
 | `-W`, `--wait` | nothing is shown before the first byte arrives |
-| `-i`, `--interval SEC` | redraw interval, 0.1–60 s (default 1); sampling is always 100 ms |
+| `-i`, `--interval SEC` | redraw interval, 0.1–60 s in steps of 0.1 (default 1); sampling is always 100 ms |
 | `-N`, `--name NAME` | label for the output instead of `ppv` (at most 128 characters) |
 | `-B`, `--buffer-size SIZE` | transfer buffer, 4K–256M (default 1M) |
 | `-p`, `--pid PID` | watch a process instead of copying |

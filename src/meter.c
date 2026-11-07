@@ -43,14 +43,10 @@ static int compare_double(const void *x, const void *y)
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
-bool ppv_window_rates(const ppv_window *w, ppv_rates *r)
+/* The per-sample rates of the window, sorted ascending. At most 640 doubles
+ * once per drawn line: negligible. Returns their number (count - 1). */
+static size_t sorted_rates(const ppv_window *w, double *rates)
 {
-    if (w->count < 2)
-        return false;
-
-    /* Per-sample rates, sorted for min, p90 and max. At most 640 doubles
-     * once per drawn line: negligible. */
-    double rates[PPV_WINDOW_CAP];
     size_t n = 0;
     for (size_t k = 1; k < w->count; k++) {
         size_t a = at(w, k - 1), b = at(w, k);
@@ -58,15 +54,32 @@ bool ppv_window_rates(const ppv_window *w, ppv_rates *r)
         rates[n++] = dt > 0.0 ? (double)(w->v[b] - w->v[a]) / dt : 0.0;
     }
     qsort(rates, n, sizeof rates[0], compare_double);
+    return n;
+}
 
-    /* Nearest-rank percentile: the smallest value with >= 90 % of the samples at or below it. */
-    size_t rank = (9 * n + 9) / 10; /* ceil(0.9 n), >= 1 */
+/* Nearest-rank percentile of sorted values: the smallest value with at least
+ * the share p of the samples at or below it. tenths = 5 for p50, 9 for p90. */
+static double nearest_rank(const double *sorted, size_t n, unsigned tenths)
+{
+    size_t rank = (tenths * n + 9) / 10; /* ceil(p n), >= 1 for n >= 1 */
+    if (rank == 0)
+        rank = 1;
+    return sorted[rank - 1];
+}
+
+bool ppv_window_rates(const ppv_window *w, ppv_rates *r)
+{
+    if (w->count < 2)
+        return false;
+
+    double rates[PPV_WINDOW_CAP];
+    size_t n = sorted_rates(w, rates);
 
     size_t a = w->first, b = at(w, w->count - 1);
     double span = (double)(w->t[b] - w->t[a]) / 1e9;
     r->min = rates[0];
     r->max = rates[n - 1];
-    r->p90 = rates[rank - 1];
+    r->p90 = nearest_rank(rates, n, 9);
     r->avg = span > 0.0 ? (double)(w->v[b] - w->v[a]) / span : 0.0;
     return true;
 }
@@ -175,4 +188,28 @@ void ppv_meter_finish(ppv_meter *m, uint64_t t_ns, uint64_t total)
     /* A very short tail would distort min/max; skip it unless it is all we have. */
     if (t_ns - m->last_t >= m->interval_ns / 2 || m->stats.n == 0)
         ppv_meter_sample(m, t_ns, total);
+}
+
+void ppv_meter_summary(const ppv_meter *m, ppv_rate_summary *s)
+{
+    s->n = m->stats.n;
+    s->min = m->stats.min;
+    s->max = m->stats.max;
+    s->p50 = 0.0;
+    s->p90 = 0.0;
+    s->approximate = false;
+    if (s->n == 0)
+        return;
+
+    /* Nothing evicted yet: the window holds every sample of the run. */
+    if (m->window.count >= 2 && m->window.count - 1 == s->n) {
+        double rates[PPV_WINDOW_CAP];
+        size_t n = sorted_rates(&m->window, rates);
+        s->p50 = nearest_rank(rates, n, 5);
+        s->p90 = nearest_rank(rates, n, 9);
+        return;
+    }
+    s->approximate = true;
+    s->p50 = ppv_stats_percentile(&m->stats, 0.50);
+    s->p90 = ppv_stats_percentile(&m->stats, 0.90);
 }

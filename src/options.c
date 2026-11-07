@@ -1,5 +1,7 @@
 #include "options.h"
 
+#include "meter.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +23,7 @@ static const char help_text[] =
     "  -q, --quiet             no live line\n"
     "  -f, --force             live line even if stderr is not a terminal\n"
     "  -W, --wait              show nothing until the first byte has arrived\n"
-    "  -i, --interval SEC      redraw interval, 0.1 to 60 seconds (default 1)\n"
+    "  -i, --interval SEC      redraw interval, 0.1 to 60 seconds in steps of 0.1 (default 1)\n"
     "  -N, --name NAME         label the output NAME (at most 128 characters)\n"
     "  -B, --buffer-size SIZE  transfer buffer, 4K to 256M (default 1M)\n"
     "  -p, --pid PID           watch the I/O of process PID instead of copying\n"
@@ -110,7 +112,11 @@ static bool parse_seconds(const char *s, uint64_t *ns)
     double v = strtod(s, NULL);
     if (!(v >= PPV_INTERVAL_MIN_SEC && v <= PPV_INTERVAL_MAX_SEC))
         return false;
-    *ns = (uint64_t)(v * 1e9 + 0.5);
+    /* The line can only be redrawn on a sample tick, so the interval is a
+     * multiple of the sample period: 0.15 -> 0.2 (nearest, never below 0.1). */
+    uint64_t raw = (uint64_t)(v * 1e9 + 0.5);
+    uint64_t steps = (raw + PPV_SAMPLE_NS / 2) / PPV_SAMPLE_NS;
+    *ns = (steps > 0 ? steps : 1) * PPV_SAMPLE_NS;
     return true;
 }
 

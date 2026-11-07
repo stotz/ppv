@@ -22,7 +22,7 @@ if(MODE STREQUAL "pipe")
   if(NOT err MATCHES "\\(${SIZE_GROUPED} bytes\\)")
     fail("statistics missing or wrong:\n${err}")
   endif()
-  if(NOT err MATCHES "  time     in read .* in write .*: " OR NOT err MATCHES "  io       [0-9]+ transfers")
+  if(NOT err MATCHES "  time     read .*, write .*: " OR NOT err MATCHES "  io       [0-9]+ transfers")
     fail("statistics incomplete:\n${err}")
   endif()
 

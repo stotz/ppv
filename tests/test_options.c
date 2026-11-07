@@ -78,8 +78,21 @@ int main(void)
     EXPECT_EQ(parse("-i", "2", NULL), PPV_CONTINUE);
     EXPECT_EQ(o.interval_ns, 2 * S);
     EXPECT_EQ(parse("--interval=.25", NULL), PPV_CONTINUE);
-    EXPECT_EQ(o.interval_ns, S / 4);
+    EXPECT_EQ(o.interval_ns, 3 * S / 10); /* rounded to the 100 ms sample period, halves up */
     EXPECT_EQ(parse("--interval", "60", NULL), PPV_CONTINUE);
+    EXPECT_EQ(o.interval_ns, 60 * S);
+    /* Rounded to the 100 ms sample period, never below it */
+    EXPECT_EQ(parse("-i", "0.15", NULL), PPV_CONTINUE);
+    EXPECT_EQ(o.interval_ns, 2 * S / 10);
+    EXPECT_EQ(parse("-i", "0.14", NULL), PPV_CONTINUE);
+    EXPECT_EQ(o.interval_ns, S / 10);
+    EXPECT_EQ(parse("-i", "0.1", NULL), PPV_CONTINUE);
+    EXPECT_EQ(o.interval_ns, S / 10);
+    EXPECT_EQ(parse("-i", "1.04", NULL), PPV_CONTINUE);
+    EXPECT_EQ(o.interval_ns, S);
+    EXPECT_EQ(parse("-i", "1.05", NULL), PPV_CONTINUE);
+    EXPECT_EQ(o.interval_ns, 11 * S / 10);
+    EXPECT_EQ(parse("-i", "59.96", NULL), PPV_CONTINUE);
     EXPECT_EQ(o.interval_ns, 60 * S);
     EXPECT_EQ(parse("-si0.1", NULL), PPV_CONTINUE); /* flag then option with value */
     EXPECT_TRUE(o.stats);

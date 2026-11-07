@@ -150,6 +150,8 @@ static int run_transfer(const ppv_options *o, bool live)
     /* xfer.result is only safe to read after the join (not when interrupted). */
     bool setup_failed = !interrupted && xfer.result == PPV_TRANSFER_SETUP_FAILED;
     if (o->stats && !setup_failed) {
+        ppv_rate_summary rates;
+        ppv_meter_summary(&meter, &rates);
         ppv_transfer_report r = {
             .name = o->name,
             .interrupted = interrupted,
@@ -160,7 +162,7 @@ static int run_transfer(const ppv_options *o, bool live)
             .in_write_ns = ppv_atomic_load(&xfer.blocked_out_ns),
             .ops = ppv_atomic_load(&xfer.ops),
             .method = interrupted ? NULL : xfer.method,
-            .rates = &meter.stats,
+            .rates = &rates,
         };
         char text[PPV_REPORT_BUF];
         ppv_stderr_write(text, ppv_report_transfer(&r, text, sizeof text));
@@ -254,6 +256,9 @@ static int run_process(const ppv_options *o, bool live)
 
     bool interrupted = wk == WAKE_INTERRUPT;
     if (o->stats) {
+        ppv_rate_summary rrates, wrates;
+        ppv_meter_summary(&mread, &rrates);
+        ppv_meter_summary(&mwrite, &wrates);
         ppv_process_report rep = {
             .name = o->name,
             .interrupted = interrupted,
@@ -262,8 +267,8 @@ static int run_process(const ppv_options *o, bool live)
             .sample_ns = PPV_SAMPLE_NS,
             .read_bytes = r,
             .write_bytes = w,
-            .read_rates = &mread.stats,
-            .write_rates = &mwrite.stats,
+            .read_rates = &rrates,
+            .write_rates = &wrates,
         };
         char text[PPV_REPORT_BUF];
         ppv_stderr_write(text, ppv_report_process(&rep, text, sizeof text));

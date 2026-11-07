@@ -25,7 +25,7 @@ typedef struct ppv_transfer_report {
     uint64_t in_write_ns;
     uint64_t ops;
     const char *method; /* may be NULL */
-    const ppv_stats *rates;
+    const ppv_rate_summary *rates;
 } ppv_transfer_report;
 
 typedef struct ppv_process_report {
@@ -36,8 +36,8 @@ typedef struct ppv_process_report {
     uint64_t sample_ns;
     uint64_t read_bytes;
     uint64_t write_bytes;
-    const ppv_stats *read_rates;
-    const ppv_stats *write_rates;
+    const ppv_rate_summary *read_rates;
+    const ppv_rate_summary *write_rates;
 } ppv_process_report;
 
 /* Both return the length of the text written to buf (always NUL terminated,
@@ -45,8 +45,8 @@ typedef struct ppv_process_report {
 size_t ppv_report_transfer(const ppv_transfer_report *r, char *buf, size_t cap);
 size_t ppv_report_process(const ppv_process_report *r, char *buf, size_t cap);
 
-/* Which side of the pipe ppv waited for, from the shares of the run time
- * spent in read and in write calls. Exposed for the unit tests. */
+/* "producer-bound", "consumer-bound" or "balanced", from the shares of the
+ * run time spent in read and in write calls. Exposed for the unit tests. */
 const char *ppv_report_bottleneck(double in_pct, double out_pct);
 
 /* "60:1", "1.3:1"; "" if one side is zero. Larger side first. */
