@@ -147,9 +147,13 @@ jobs:
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
 
-  # Line coverage of src/ from the whole test suite (gcc/gcov, gcovr).
+  # Line coverage of src/ from the whole test suite (gcc/gcov, gcovr), for
+  # the POSIX layer on Linux and the Win32 layer on MinGW. What is left
+  # uncovered is mostly error paths that need fault injection (ENOMEM,
+  # pthread_create failing) and code that runs just before a death by signal
+  # (gcov cannot write its data then).
   coverage:
-    name: coverage
+    name: coverage-linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,11 +170,50 @@ jobs:
         run: |
           mkdir -p coverage
           gcovr --root . --filter src/ --exclude-unreachable-branches \
-            --print-summary --fail-under-line 80 \
+            --print-summary --fail-under-line 85 \
             --html-details coverage/index.html --txt coverage/summary.txt build
           cat coverage/summary.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage
+          name: coverage-linux
+          path: coverage/
+          if-no-files-found: error
+
+  coverage-windows:
+    name: coverage-windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python-gcovr
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          "-DCMAKE_C_FLAGS=--coverage -O0"
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - name: Report
+        # No threshold yet: the Win32 layer has never been measured. Set one
+        # from the first results.
+        run: |
+          mkdir -p coverage
+          gcovr --root . --filter src/ --exclude-unreachable-branches \
+            --print-summary \
+            --html-details coverage/index.html --txt coverage/summary.txt build
+          cat coverage/summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-windows
           path: coverage/
           if-no-files-found: error

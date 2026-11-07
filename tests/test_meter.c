@@ -7,19 +7,21 @@ static ppv_meter m; /* large; keep it off the stack */
 
 int main(void)
 {
-    /* Window: rates 100, 200 -> min 100, max 200, avg 150 (bytes / time) */
+    /* Window: rates 100, 200 -> p10 100, p90 200, avg 150 (bytes / time) */
     ppv_meter_init(&m, S, 0, 0);
     ppv_rates r;
     uint64_t total;
     EXPECT_TRUE(!ppv_window_rates(&m.window, &r));
     ppv_meter_sample(&m, 1 * S, 100);
-    EXPECT_TRUE(ppv_window_rates(&m.window, &r)); /* one rate: all four equal */
-    EXPECT_NEAR(r.min, 100, 1e-9);
+    EXPECT_TRUE(ppv_window_rates(&m.window, &r)); /* one rate: all equal */
+    EXPECT_NEAR(r.p10, 100, 1e-9);
+    EXPECT_NEAR(r.p50, 100, 1e-9);
     EXPECT_NEAR(r.p90, 100, 1e-9);
+    EXPECT_NEAR(r.avg, 100, 1e-9);
     ppv_meter_sample(&m, 2 * S, 300);
     EXPECT_TRUE(ppv_window_rates(&m.window, &r));
-    EXPECT_NEAR(r.min, 100, 1e-9);
-    EXPECT_NEAR(r.max, 200, 1e-9);
+    EXPECT_NEAR(r.p10, 100, 1e-9); /* ceil(0.1 * 2) = 1st of 2 */
+    EXPECT_NEAR(r.p50, 100, 1e-9); /* ceil(0.5 * 2) = 1st of 2 */
     EXPECT_NEAR(r.avg, 150, 1e-9);
     EXPECT_NEAR(r.p90, 200, 1e-9); /* ceil(0.9 * 2) = 2nd of 2 */
 
@@ -30,10 +32,10 @@ int main(void)
     ppv_meter_sample(&m, 4 * S, 1000 + 300); /* 100 B/s for 3 s */
     EXPECT_TRUE(ppv_window_rates(&m.window, &r));
     EXPECT_NEAR(r.avg, 1300.0 / 4.0, 1e-9);
-    EXPECT_NEAR(r.min, 100, 1e-9);
-    EXPECT_NEAR(r.max, 1000, 1e-9);
+    EXPECT_NEAR(r.p10, 100, 1e-9);
+    EXPECT_NEAR(r.p90, 1000, 1e-9);
 
-    /* p90 of the window: nearest rank over the per-sample rates. */
+    /* Percentiles of the window: nearest rank over the per-sample rates. */
     ppv_meter_init(&m, S, 0, 0);
     total = 0;
     for (uint64_t k = 1; k <= 20; k++) {
@@ -42,9 +44,33 @@ int main(void)
     }
     EXPECT_TRUE(ppv_window_rates(&m.window, &r));
     EXPECT_NEAR(r.p90, 180, 1e-9); /* ceil(0.9 * 20) = 18th of 20 */
-    EXPECT_NEAR(r.min, 10, 1e-9);
-    EXPECT_NEAR(r.max, 200, 1e-9);
+    EXPECT_NEAR(r.p50, 100, 1e-9); /* 10th of 20 */
+    EXPECT_NEAR(r.p10, 20, 1e-9);  /* 2nd of 20 */
     EXPECT_NEAR(r.avg, (double)total / 20.0, 1e-9);
+
+    /* One 100 ms stall in a minute: p10 unmoved, where min would be 0. */
+    ppv_meter_init(&m, PPV_SAMPLE_NS, 0, 0);
+    total = 0;
+    for (uint64_t k = 1; k <= 600; k++) {
+        if (k != 300)
+            total += 1000;
+        ppv_meter_sample(&m, k * PPV_SAMPLE_NS, total);
+    }
+    EXPECT_TRUE(ppv_window_rates(&m.window, &r));
+    EXPECT_NEAR(r.p10, 10000, 1e-6);
+    EXPECT_NEAR(r.p50, 10000, 1e-6);
+    /* ... but a consumer stalled 20 % of the time shows in p10 */
+    ppv_meter_init(&m, PPV_SAMPLE_NS, 0, 0);
+    total = 0;
+    for (uint64_t k = 1; k <= 600; k++) {
+        if (k % 5 != 0)
+            total += 1000;
+        ppv_meter_sample(&m, k * PPV_SAMPLE_NS, total);
+    }
+    EXPECT_TRUE(ppv_window_rates(&m.window, &r));
+    EXPECT_NEAR(r.p10, 0, 1e-9);
+    EXPECT_NEAR(r.p50, 10000, 1e-6);
+    EXPECT_NEAR(r.avg, 8000, 1e-6);
     ppv_meter_init(&m, S, 0, 0);
 
     /* After 2 minutes at 1000 B/s the early samples are out of the window. */
@@ -56,7 +82,7 @@ int main(void)
         ppv_meter_sample(&m, t * S, total);
     }
     EXPECT_TRUE(ppv_window_rates(&m.window, &r));
-    EXPECT_NEAR(r.min, 1000, 1e-9);
+    EXPECT_NEAR(r.p10, 1000, 1e-9);
     EXPECT_NEAR(r.avg, 1000, 1e-9);
     EXPECT_TRUE(m.window.count <= 62);
 
@@ -107,10 +133,10 @@ int main(void)
     EXPECT_TRUE(m.window.count <= 602 && m.window.count >= 600);
     EXPECT_TRUE(m.window.first < PPV_WINDOW_CAP);
     EXPECT_TRUE(ppv_window_rates(&m.window, &r));
-    EXPECT_NEAR(r.min, 1000, 1e-6);
+    EXPECT_NEAR(r.p10, 1000, 1e-6);
     EXPECT_NEAR(r.avg, 1000, 1e-6);
+    EXPECT_NEAR(r.p50, 1000, 1e-6);
     EXPECT_NEAR(r.p90, 1000, 1e-6);
-    EXPECT_NEAR(r.max, 1000, 1e-6);
     EXPECT_TRUE(m.stats.n == UINT64_C(3) * PPV_WINDOW_CAP);
     EXPECT_NEAR(ppv_stats_percentile(&m.stats, 0.5), 1000, 1000 * 0.07);
 
@@ -128,12 +154,15 @@ int main(void)
     }
     ppv_meter_summary(&m, &sum);
     EXPECT_TRUE(sum.n == 20 && !sum.approximate);
-    EXPECT_NEAR(sum.min, 10000, 1e-6);
-    EXPECT_NEAR(sum.max, 200000, 1e-6);
-    EXPECT_NEAR(sum.p50, 100000, 1e-6); /* exact: 10th of 20 */
-    EXPECT_NEAR(sum.p90, 180000, 1e-6); /* exact: 18th of 20 */
+    EXPECT_NEAR(sum.p10, 20000, 1e-6);  /* exact: 2nd of 20 */
+    EXPECT_NEAR(sum.p25, 50000, 1e-6);  /* 5th */
+    EXPECT_NEAR(sum.p50, 100000, 1e-6); /* 10th */
+    EXPECT_NEAR(sum.p75, 150000, 1e-6); /* 15th */
+    EXPECT_NEAR(sum.p90, 180000, 1e-6); /* 18th */
     EXPECT_TRUE(ppv_window_rates(&m.window, &r));
-    EXPECT_NEAR(r.p90, sum.p90, 1e-9); /* live line and report agree */
+    EXPECT_NEAR(r.p10, sum.p10, 1e-9); /* live line and report agree */
+    EXPECT_NEAR(r.p50, sum.p50, 1e-9);
+    EXPECT_NEAR(r.p90, sum.p90, 1e-9);
     /* keep sampling past the window: histogram, marked approximate */
     for (uint64_t k = 21; k <= 700; k++) {
         total += 100000;
@@ -141,9 +170,9 @@ int main(void)
     }
     ppv_meter_summary(&m, &sum);
     EXPECT_TRUE(sum.n == 700 && sum.approximate);
+    EXPECT_NEAR(sum.p10, 1000000, 1000000 * 0.07);
     EXPECT_NEAR(sum.p50, 1000000, 1000000 * 0.07);
     EXPECT_NEAR(sum.p90, 1000000, 1000000 * 0.07);
-    EXPECT_NEAR(sum.min, 10000, 1e-6);
 
     /* Histogram buckets: monotonic, in range, and the middle is within one
      * sub-bucket (1/8 of the power of two) of the value. */

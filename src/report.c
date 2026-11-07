@@ -49,30 +49,35 @@ static double percent(uint64_t part, uint64_t whole)
     return whole > 0 ? 100.0 * (double)part / (double)whole : 0.0;
 }
 
-/* "min 474M/s, p50 486M/s, p90 533M/s, max 545M/s (18 samples of 100ms)".
- * Percentiles are only quoted once there are enough samples for them to
- * mean something; a "~" marks values from the histogram (runs longer than
- * the window; about 6 % resolution). */
-static void rate_summary(char *buf, size_t cap, const ppv_rate_summary *s, uint64_t sample_ns)
+/* ", 1340 samples" for the headline; the count says how much the percentiles
+ * are worth, and "no samples" / "3 samples" explains a missing rate line. */
+static void sample_count(char *buf, size_t cap, const ppv_rate_summary *s)
 {
-    if (s->n == 0) {
-        snprintf(buf, cap, "no samples");
-        return;
-    }
-    char mn[32], p50[32], p90[32], mx[32], iv[32];
-    ppv_fmt_rate(mn, sizeof mn, s->min);
-    ppv_fmt_rate(mx, sizeof mx, s->max);
-    ppv_fmt_duration(iv, sizeof iv, sample_ns);
+    if (s->n == 0)
+        snprintf(buf, cap, ", no samples");
+    else
+        snprintf(buf, cap, ", %" PRIu64 " sample%s", s->n, s->n == 1 ? "" : "s");
+}
+
+/* "p10 53.7M/s, p25 120M/s, p50 184M/s, p75 300M/s, p90 432M/s", a "~" in
+ * front of values from the histogram (runs longer than the window, about
+ * 6 % resolution). Empty if there are too few samples for percentiles. */
+static void rate_summary(char *buf, size_t cap, const ppv_rate_summary *s)
+{
     if (s->n < PPV_PERCENTILE_MIN_SAMPLES) {
-        snprintf(buf, cap, "min %s, max %s (%" PRIu64 " sample%s of %s, too few for percentiles)",
-                 mn, mx, s->n, s->n == 1 ? "" : "s", iv);
+        if (cap > 0)
+            buf[0] = '\0';
         return;
     }
+    char p10[32], p25[32], p50[32], p75[32], p90[32];
+    ppv_fmt_rate(p10, sizeof p10, s->p10);
+    ppv_fmt_rate(p25, sizeof p25, s->p25);
     ppv_fmt_rate(p50, sizeof p50, s->p50);
+    ppv_fmt_rate(p75, sizeof p75, s->p75);
     ppv_fmt_rate(p90, sizeof p90, s->p90);
-    const char *about = s->approximate ? "~" : "";
-    snprintf(buf, cap, "min %s, p50 %s%s, p90 %s%s, max %s (%" PRIu64 " samples of %s)", mn, about,
-             p50, about, p90, mx, s->n, iv);
+    const char *a = s->approximate ? "~" : "";
+    snprintf(buf, cap, "p10 %s%s, p25 %s%s, p50 %s%s, p75 %s%s, p90 %s%s", a, p10, a, p25, a, p50,
+             a, p75, a, p90);
 }
 
 const char *ppv_report_bottleneck(double in_pct, double out_pct)
@@ -105,18 +110,20 @@ size_t ppv_report_transfer(const ppv_transfer_report *r, char *buf, size_t cap)
     sink_init(&s, buf, cap);
 
     const char *who = r->name != NULL && r->name[0] != '\0' ? r->name : "ppv";
-    char total[32], exact[32], elapsed[32], avg[32], rates[256], tin[32], tout[32], ratio[32],
-        chunk[32];
+    char total[32], exact[32], elapsed[32], avg[32], count[32], rates[256], tin[32], tout[32],
+        ratio[32], chunk[32];
 
     ppv_fmt_size(total, sizeof total, (double)r->bytes);
     ppv_fmt_group(exact, sizeof exact, r->bytes);
     ppv_fmt_duration(elapsed, sizeof elapsed, r->elapsed_ns);
     ppv_fmt_rate(avg, sizeof avg, per_second(r->bytes, r->elapsed_ns));
-    rate_summary(rates, sizeof rates, r->rates, r->sample_ns);
+    sample_count(count, sizeof count, r->rates);
+    rate_summary(rates, sizeof rates, r->rates);
 
-    emit(&s, "%s: %s (%s bytes) in %s, avg %s%s\n", who, total, exact, elapsed, avg,
-         r->interrupted ? " (interrupted)" : "");
-    emit(&s, "  rate     %s\n", rates);
+    emit(&s, "%s: %s (%s byte%s) in %s, avg %s%s%s\n", who, total, exact, r->bytes == 1 ? "" : "s",
+         elapsed, avg, count, r->interrupted ? " (interrupted)" : "");
+    if (rates[0] != '\0')
+        emit(&s, "  rate     %s\n", rates);
 
     /* A filter with no work of its own is always inside read or write, so
      * the two shares add up to the run time; what matters is their ratio. */
@@ -136,15 +143,17 @@ size_t ppv_report_transfer(const ppv_transfer_report *r, char *buf, size_t cap)
 }
 
 static void report_direction(sink *s, const char *label, uint64_t bytes, uint64_t elapsed_ns,
-                             const ppv_rate_summary *st, uint64_t sample_ns)
+                             const ppv_rate_summary *st)
 {
-    char total[32], exact[32], avg[32], rates[256];
+    char total[32], exact[32], avg[32], count[32], rates[256];
     ppv_fmt_size(total, sizeof total, (double)bytes);
     ppv_fmt_group(exact, sizeof exact, bytes);
     ppv_fmt_rate(avg, sizeof avg, per_second(bytes, elapsed_ns));
-    rate_summary(rates, sizeof rates, st, sample_ns);
-    emit(s, "  %-6s %s (%s bytes), avg %s\n", label, total, exact, avg);
-    emit(s, "         %s\n", rates);
+    sample_count(count, sizeof count, st);
+    rate_summary(rates, sizeof rates, st);
+    emit(s, "  %-6s %s (%s bytes), avg %s%s\n", label, total, exact, avg, count);
+    if (rates[0] != '\0')
+        emit(s, "         %s\n", rates);
 }
 
 size_t ppv_report_process(const ppv_process_report *r, char *buf, size_t cap)
@@ -158,7 +167,7 @@ size_t ppv_report_process(const ppv_process_report *r, char *buf, size_t cap)
 
     emit(&s, "%s: pid %" PRIu64 ", watched %s%s\n", who, r->pid, elapsed,
          r->interrupted ? " (interrupted)" : " (process exited)");
-    report_direction(&s, "read", r->read_bytes, r->elapsed_ns, r->read_rates, r->sample_ns);
-    report_direction(&s, "write", r->write_bytes, r->elapsed_ns, r->write_rates, r->sample_ns);
+    report_direction(&s, "read", r->read_bytes, r->elapsed_ns, r->read_rates);
+    report_direction(&s, "write", r->write_bytes, r->elapsed_ns, r->write_rates);
     return s.len;
 }

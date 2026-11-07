@@ -20,7 +20,6 @@ typedef struct ppv_transfer_report {
     bool interrupted;
     uint64_t bytes;
     uint64_t elapsed_ns;
-    uint64_t sample_ns;  /* sampling period of `rates` */
     uint64_t in_read_ns; /* time spent inside read calls (waiting + copying) */
     uint64_t in_write_ns;
     uint64_t ops;
@@ -33,7 +32,6 @@ typedef struct ppv_process_report {
     bool interrupted;
     uint64_t pid;
     uint64_t elapsed_ns;
-    uint64_t sample_ns;
     uint64_t read_bytes;
     uint64_t write_bytes;
     const ppv_rate_summary *read_rates;

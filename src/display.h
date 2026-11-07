@@ -1,7 +1,7 @@
 /*
  * ppv - the live status line on stderr.
  *
- *   ppv[887M, min  98M/s, avg  99M/s, p90 100M/s, max 102M/s]
+ *   ppv[887M, avg 504M/s, p10 474M/s, p50 486M/s, p90 533M/s]
  *   ppv[R 0B avg 0B/s | W 3.84G avg 1.11G/s]                     (--pid)
  *
  * Every numeric field is right-aligned to the widest value it has shown so
@@ -27,7 +27,7 @@
 #define PPV_LINE_DEFAULT 79  /* visible characters if the terminal width is unknown */
 #define PPV_LINE_MAX     255 /* hard cap, whatever the terminal says */
 #define PPV_LINE_BUF     (PPV_LINE_MAX + 2) /* + "\n" or "\r", + NUL */
-#define PPV_FIELDS       5 /* numeric fields per line (total, min, avg, p90, max) */
+#define PPV_FIELDS       5 /* numeric fields per line (total, avg, p10, p50, p90) */
 
 typedef struct ppv_display {
     bool enabled;

@@ -49,16 +49,16 @@ size_t ppv_display_transfer(ppv_display *d, uint64_t bytes, const ppv_rates *rat
 {
     if (!d->enabled)
         return 0;
-    char total[FIELD_BUF], mn[FIELD_BUF], av[FIELD_BUF], p90[FIELD_BUF], mx[FIELD_BUF];
+    char total[FIELD_BUF], av[FIELD_BUF], p10[FIELD_BUF], p50[FIELD_BUF], p90[FIELD_BUF];
     size_field(d, 0, bytes, total);
-    rate_field(d, 1, rates, rates != NULL ? rates->min : 0.0, mn);
-    rate_field(d, 2, rates, rates != NULL ? rates->avg : 0.0, av);
-    rate_field(d, 3, rates, rates != NULL ? rates->p90 : 0.0, p90);
-    rate_field(d, 4, rates, rates != NULL ? rates->max : 0.0, mx);
+    rate_field(d, 1, rates, rates != NULL ? rates->avg : 0.0, av);
+    rate_field(d, 2, rates, rates != NULL ? rates->p10 : 0.0, p10);
+    rate_field(d, 3, rates, rates != NULL ? rates->p50 : 0.0, p50);
+    rate_field(d, 4, rates, rates != NULL ? rates->p90 : 0.0, p90);
 
     char body[PPV_LINE_BUF + 5 * FIELD_BUF];
-    snprintf(body, sizeof body, "%s[%s, min %s, avg %s, p90 %s, max %s]",
-             d->name != NULL ? d->name : "ppv", total, mn, av, p90, mx);
+    snprintf(body, sizeof body, "%s[%s, avg %s, p10 %s, p50 %s, p90 %s]",
+             d->name != NULL ? d->name : "ppv", total, av, p10, p50, p90);
     return ppv_display_render(d, body, final, columns, out);
 }
 

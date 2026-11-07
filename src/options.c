@@ -16,7 +16,7 @@ static const char help_text[] =
     "       ppv --pid PID [OPTION]...\n"
     "Copy standard input to standard output, show the throughput on standard error.\n"
     "\n"
-    "Live line: ppv[total, min, avg, p90, max] - rates over the last minute,\n"
+    "Live line: ppv[total, avg, p10, p50, p90] - rates over the last minute,\n"
     "sampled every 0.1 s. -N replaces the \"ppv\" label.\n"
     "\n"
     "  -s, --stats             print statistics at the end\n"

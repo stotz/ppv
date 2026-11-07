@@ -24,29 +24,34 @@ ppv --pid 1234 -s                           # watch the I/O of a running process
 Live line on stderr (redrawn once per second, `\r` only):
 
 ```
-ppv[887M, min 474M/s, avg 504M/s, p90 533M/s, max 545M/s]   total; rates over the last minute
-ppv[R 0B avg 0B/s | W 3.84G avg 1.11G/s]                     --pid: per direction
+ppv[26.2G, avg 190M/s, p10 53.7M/s, p50 184M/s, p90 407M/s]   total; rates over the last minute
+ppv[R 0B avg 0B/s | W 3.84G avg 1.11G/s]                       --pid: per direction
 ```
 
-The rates are sampled every 100 ms whatever `-i` says; `avg` is bytes divided
-by time. Each number is right-aligned to the widest value it has shown, so
-the line does not jump around. `-N` replaces the `ppv` label.
+`avg` is bytes divided by time over the last minute. p10, p50 and p90 are
+percentiles of the 100 ms samples of that minute: a tenth of the time it was
+slower than p10, half the time slower than p50, a tenth of the time faster
+than p90. Percentiles instead of min and max because a single 100 ms hiccup
+would pin `min` to 0 B/s for a whole minute, while a consumer that stalls a
+tenth of the time does show up in p10. The rates are sampled every 100 ms
+whatever `-i` says. Each number is right-aligned to the widest value it has
+shown, so the line does not jump around. `-N` replaces the `ppv` label.
 
 Statistics with `-s` at the end:
 
 ```
-ppv: 887M (930_086_912 bytes) in 1.8s, avg 504M/s
-  rate     min 474M/s, p50 486M/s, p90 533M/s, max 545M/s (18 samples of 100ms)
-  time     read 1.7s (99%), write 18ms (1%): producer-bound (94:1)
-  io       887 transfers, avg 1.00M, ReadFile/WriteFile
+ppv: 26.2G (28_168_945_664 bytes) in 2m14s, avg 200M/s, 1340 samples
+  rate     p10 ~53.7M/s, p25 ~120M/s, p50 ~184M/s, p75 ~300M/s, p90 ~432M/s
+  time     read 21.1s (16%), write 1m53s (84%): consumer-bound (5.3:1)
+  io       26864 transfers, avg 1.00M, ReadFile/WriteFile
 ```
 
-* `rate`: min, median, p90 and max of the 100 ms samples. For runs up to a
-  minute the percentiles are exact and identical to the live line; longer
+* `rate`: percentiles of the 100 ms samples over the whole run; p25 and p75
+  add the interquartile range, a measure of how bursty the stream was. For
+  runs up to a minute they are exact and identical to the live line; longer
   runs use a log histogram with about 6 % resolution, marked `~`. With fewer
-  than 10 samples (one second) only min and max are printed; there is no
-  point in a p90 of three values. min and max are 100 ms values: a stall or
-  a burst of 100 ms shows, which is intended.
+  than 10 samples (one second) the line is left out; there is no point in a
+  p90 of three values. The sample count is on the first line.
 * `time`: how long ppv spent inside its read and write calls, i.e. waiting
   for the producer and for the consumer. A filter has no work of its own, so
   the two shares add up to the run time; the ratio in brackets is what
@@ -88,13 +93,17 @@ sudo install -m 644 ppv-0.1.0-linux-x64/ppv.1 /usr/local/share/man/man1/
 Windows: unzip `ppv-0.1.0-windows-x64.zip` and copy `ppv.exe` to a directory
 on `%PATH%`. It runs in cmd, PowerShell, Windows Terminal and git-bash:
 
-```powershell
-cmd /c "type big.iso" | ppv -s | Out-Null          # PowerShell
-tar cf - data | ppv -s | ssh host "cat > data.tar"  # git-bash, same as on Linux
+```sh
+tar cf - data | ppv -s | ssh host "cat > data.tar"     # git-bash, same as on Linux
+C:\Windows\System32\tar.exe -cf - C:\data | ppv -s > \\host\share\data.tar   # cmd
 ```
 
-(PowerShell's own `Get-Content` goes through its object pipeline and is slow
-for binary data; use `cmd /c type`, or run the pipeline in `cmd`.)
+Run pipelines in cmd or git-bash. Windows PowerShell 5.1 does not pass bytes
+between native commands: `|` decodes the stream into strings and `>` is
+`Out-File`, which waits for line ends, so binary data arrives re-encoded or
+not at all. PowerShell 7.4 and newer pass bytes through. Note also that git
+installs its own (MSYS) `tar`; the native `C:\Windows\System32\tar.exe` is
+several times faster when writing large records into a pipe.
 
 ## Build
 
@@ -142,8 +151,9 @@ The transfer thread only moves data and bumps atomic counters; the main thread
 samples them every 100 ms and redraws every `-i` interval. A blocked reader or
 writer never freezes the display, and no `select()` on pipes is needed (it
 does not exist for pipes on Windows). Rates live in a one-minute ring buffer
-(min, avg, p90, max for the live line) and a 496-bucket log histogram
-(percentiles over the whole run in constant memory).
+(avg, p10, p50, p90 for the live line, exact percentiles for the report
+while the run fits) and a 496-bucket log histogram (percentiles over longer
+runs in constant memory).
 
 | | Linux | Windows |
 |---|---|---|

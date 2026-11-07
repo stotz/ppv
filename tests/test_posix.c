@@ -4,6 +4,9 @@
  *   - closed standard descriptors (ppv must not hang or corrupt the stream)
  *   - Ctrl-C / SIGTERM: termination by the same signal, or 128 + signal
  *   - stdout opened with O_APPEND (Linux: splice falls back to read/write)
+ *   - a read error (directory as stdin)
+ *   - non-blocking pipes inherited from the parent
+ *   - --pid error messages (Linux)
  *
  *   test_posix PPV GEN CHECK WORKDIR
  */
@@ -247,7 +250,7 @@ static void test_signal(int sig)
     static char text[8192];
     text[0] = '\0';
     read_until(errp[0], '\r', text, sizeof text); /* first live line = sign of life */
-    EXPECT_CONTAINS(text, "ppv[0B, min 0B/s, avg 0B/s, p90 0B/s, max 0B/s]");
+    EXPECT_CONTAINS(text, "ppv[0B, avg 0B/s, p10 0B/s, p50 0B/s, p90 0B/s]");
     EXPECT_TRUE(kill(p, sig) == 0);
 
     int status = 0;
@@ -317,6 +320,131 @@ static void test_append(void)
     unlink(out_path);
 }
 
+/* Reading from a directory fails (EISDIR): the read-error path of the
+ * transfer, including the fallback from splice() on Linux. */
+static void test_read_error(void)
+{
+    static char q[] = "-q", s[] = "-s";
+    char *argv[] = {g_ppv, q, s, NULL};
+    int dir = open("/", O_RDONLY);
+    EXPECT_TRUE(dir >= 0);
+    int errp[2];
+    make_pipe(errp);
+    int null_out = open_null(O_WRONLY);
+    pid_t p = spawn(argv, dir, null_out, errp[1]);
+    close(dir);
+    close(errp[1]);
+    close(null_out);
+
+    int status = 0;
+    if (!wait_for(p, 5000, &status))
+        TEST_FAIL("read error: ppv did not exit");
+    else
+        EXPECT_EQ(exit_code(status), 1);
+    static char text[4096];
+    read_all(errp[0], text, sizeof text);
+    close(errp[0]);
+    EXPECT_CONTAINS(text, "ppv: read error: ");
+}
+
+/* Pipes inherited with O_NONBLOCK (as Node or asyncio parents hand them
+ * out): ppv must wait with poll() instead of failing on EAGAIN, on both
+ * sides. A slow producer guarantees empty-pipe reads. */
+static void test_nonblocking(void)
+{
+    static char size[] = SIZE, delay[] = "2", q[] = "-q", s[] = "-s";
+    char *gen_argv[] = {g_gen, size, delay, NULL};
+    char *ppv_argv[] = {g_ppv, q, s, NULL};
+    char *check_argv[] = {g_check, size, NULL};
+
+    int a[2], b[2], errp[2];
+    make_pipe(a);
+    make_pipe(b);
+    make_pipe(errp);
+    /* The flag lives on the open file description, so setting it here makes
+     * ppv's stdin and stdout non-blocking; gen's and check's ends are
+     * separate descriptions and stay blocking. */
+    EXPECT_TRUE(fcntl(a[0], F_SETFL, O_NONBLOCK) == 0);
+    EXPECT_TRUE(fcntl(b[1], F_SETFL, O_NONBLOCK) == 0);
+    int null_in = open_null(O_RDONLY);
+    pid_t gen = spawn(gen_argv, null_in, a[1], STDERR_FILENO);
+    pid_t ppv = spawn(ppv_argv, a[0], b[1], errp[1]);
+    pid_t check = spawn(check_argv, b[0], STDOUT_FILENO, STDERR_FILENO);
+    close(a[0]);
+    close(a[1]);
+    close(b[0]);
+    close(b[1]);
+    close(errp[1]);
+    close(null_in);
+
+    int status = 0;
+    if (!wait_for(ppv, 20000, &status))
+        TEST_FAIL("non-blocking: ppv did not exit");
+    else
+        EXPECT_EQ(exit_code(status), 0);
+    static char text[4096];
+    read_all(errp[0], text, sizeof text);
+    close(errp[0]);
+    EXPECT_CONTAINS(text, "(3_000_000 bytes)");
+    EXPECT_TRUE(wait_for(check, 10000, &status));
+    EXPECT_EQ(exit_code(status), 0); /* data intact */
+    EXPECT_TRUE(wait_for(gen, 10000, &status));
+}
+
+#if defined(__linux__)
+/* Runs ppv --pid PID and returns its exit code; stderr into text. */
+static int run_pid(const char *pid_text, char *text, size_t cap)
+{
+    static char opt[] = "--pid";
+    char arg[32];
+    snprintf(arg, sizeof arg, "%s", pid_text);
+    char *argv[] = {g_ppv, opt, arg, NULL};
+    int errp[2];
+    make_pipe(errp);
+    int null_in = open_null(O_RDONLY), null_out = open_null(O_WRONLY);
+    pid_t p = spawn(argv, null_in, null_out, errp[1]);
+    close(null_in);
+    close(null_out);
+    close(errp[1]);
+    int status = 0;
+    if (!wait_for(p, 5000, &status)) {
+        TEST_FAIL("--pid %s: ppv did not exit", pid_text);
+        text[0] = '\0';
+        close(errp[0]);
+        return -1;
+    }
+    read_all(errp[0], text, cap);
+    close(errp[0]);
+    return exit_code(status);
+}
+
+/* The two error messages of --pid that the e2e script cannot provoke. */
+static void test_pid_errors(void)
+{
+    static char text[4096];
+
+    /* A process that has already exited and been reaped. */
+    pid_t child = fork();
+    if (child == 0)
+        _exit(0);
+    EXPECT_TRUE(child > 0);
+    waitpid(child, NULL, 0);
+    char pid_text[32];
+    snprintf(pid_text, sizeof pid_text, "%ld", (long)child);
+    EXPECT_EQ(run_pid(pid_text, text, sizeof text), 1);
+    EXPECT_CONTAINS(text, "no such process");
+
+    /* PID 1 belongs to root: /proc/1/io is not readable by anyone else.
+     * Skipped when running as root (e.g. in a container) and on kernels
+     * without I/O accounting (WSL2: no /proc/PID/io at all, ppv says so
+     * instead of "permission denied"). */
+    if (geteuid() != 0 && access("/proc/self/io", R_OK) == 0) {
+        EXPECT_EQ(run_pid("1", text, sizeof text), 1);
+        EXPECT_CONTAINS(text, "permission denied");
+    }
+}
+#endif
+
 int main(int argc, char **argv)
 {
     if (argc != 5) {
@@ -335,6 +463,11 @@ int main(int argc, char **argv)
     test_signal(SIGINT);
     test_signal(SIGTERM);
     test_append();
+    test_read_error();
+    test_nonblocking();
+#if defined(__linux__)
+    test_pid_errors();
+#endif
 
     return TEST_RESULT();
 }

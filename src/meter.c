@@ -58,10 +58,10 @@ static size_t sorted_rates(const ppv_window *w, double *rates)
 }
 
 /* Nearest-rank percentile of sorted values: the smallest value with at least
- * the share p of the samples at or below it. tenths = 5 for p50, 9 for p90. */
-static double nearest_rank(const double *sorted, size_t n, unsigned tenths)
+ * pct % of the samples at or below it. */
+static double nearest_rank(const double *sorted, size_t n, unsigned pct)
 {
-    size_t rank = (tenths * n + 9) / 10; /* ceil(p n), >= 1 for n >= 1 */
+    size_t rank = (pct * n + 99) / 100; /* ceil(pct n / 100), >= 1 for n >= 1 */
     if (rank == 0)
         rank = 1;
     return sorted[rank - 1];
@@ -77,10 +77,10 @@ bool ppv_window_rates(const ppv_window *w, ppv_rates *r)
 
     size_t a = w->first, b = at(w, w->count - 1);
     double span = (double)(w->t[b] - w->t[a]) / 1e9;
-    r->min = rates[0];
-    r->max = rates[n - 1];
-    r->p90 = nearest_rank(rates, n, 9);
     r->avg = span > 0.0 ? (double)(w->v[b] - w->v[a]) / span : 0.0;
+    r->p10 = nearest_rank(rates, n, 10);
+    r->p50 = nearest_rank(rates, n, 50);
+    r->p90 = nearest_rank(rates, n, 90);
     return true;
 }
 
@@ -192,12 +192,8 @@ void ppv_meter_finish(ppv_meter *m, uint64_t t_ns, uint64_t total)
 
 void ppv_meter_summary(const ppv_meter *m, ppv_rate_summary *s)
 {
+    memset(s, 0, sizeof *s);
     s->n = m->stats.n;
-    s->min = m->stats.min;
-    s->max = m->stats.max;
-    s->p50 = 0.0;
-    s->p90 = 0.0;
-    s->approximate = false;
     if (s->n == 0)
         return;
 
@@ -205,11 +201,17 @@ void ppv_meter_summary(const ppv_meter *m, ppv_rate_summary *s)
     if (m->window.count >= 2 && m->window.count - 1 == s->n) {
         double rates[PPV_WINDOW_CAP];
         size_t n = sorted_rates(&m->window, rates);
-        s->p50 = nearest_rank(rates, n, 5);
-        s->p90 = nearest_rank(rates, n, 9);
+        s->p10 = nearest_rank(rates, n, 10);
+        s->p25 = nearest_rank(rates, n, 25);
+        s->p50 = nearest_rank(rates, n, 50);
+        s->p75 = nearest_rank(rates, n, 75);
+        s->p90 = nearest_rank(rates, n, 90);
         return;
     }
     s->approximate = true;
+    s->p10 = ppv_stats_percentile(&m->stats, 0.10);
+    s->p25 = ppv_stats_percentile(&m->stats, 0.25);
     s->p50 = ppv_stats_percentile(&m->stats, 0.50);
+    s->p75 = ppv_stats_percentile(&m->stats, 0.75);
     s->p90 = ppv_stats_percentile(&m->stats, 0.90);
 }

@@ -34,7 +34,10 @@ CodeQL and a FreeBSD build.
 
 * Pure code gets a unit test in `tests/test_*.c` (plain C, `tests/test.h`).
 * Behaviour of the binary gets an end-to-end test in `tests/e2e.cmake`
-  (portable) or in `tests/test_posix.c` / `tests/test_pid.c` (process control).
+  (portable) or in `tests/test_posix.c` / `tests/test_pid.c` (process
+  control: descriptors, signals, non-blocking pipes, `--pid`).
+* Coverage is measured on Linux (gcc) and MinGW in CI; error paths that
+  need fault injection (out of memory, thread creation) are not tested.
 * A bug fix comes with a test that fails without the fix.
 
 ## Pull requests

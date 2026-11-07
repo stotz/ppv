@@ -25,13 +25,16 @@
 /* Percentiles are only reported from this many samples on (one second). */
 #define PPV_PERCENTILE_MIN_SAMPLES 10
 
-/* Rates over a window: min and max of the per-sample rates, the 90th
- * percentile of them, and avg = bytes / time over the whole window. */
+/* Rates over a window for the live line: avg = bytes / time over the whole
+ * window, and the 10th, 50th and 90th percentile of the per-sample rates.
+ * Percentiles instead of min/max: a single 100 ms stall does not pin the
+ * line to 0 B/s for a minute, but a consumer that stalls a tenth of the
+ * time shows up in p10. */
 typedef struct ppv_rates {
-    double min;
     double avg;
+    double p10;
+    double p50;
     double p90;
-    double max;
 } ppv_rates;
 
 typedef struct ppv_window {
@@ -83,10 +86,11 @@ void ppv_meter_finish(ppv_meter *m, uint64_t t_ns, uint64_t total);
  * about 6 % resolution). */
 typedef struct ppv_rate_summary {
     uint64_t n;
-    double min;
+    double p10;
+    double p25;
     double p50;
+    double p75;
     double p90;
-    double max;
     bool approximate; /* percentiles from the histogram */
 } ppv_rate_summary;
 
