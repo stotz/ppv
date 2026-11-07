@@ -141,6 +141,11 @@ bool ppv_stderr_is_tty(void)
 
 bool ppv_stderr_in_foreground(void)
 {
+    /* Job control only exists on a terminal. Ask only then: FreeBSD answers
+     * TIOCGPGRP on a pipe too (the SIGIO owner, 0 if none), which would make
+     * every ppv -f writing into a pipe look like a background job. */
+    if (isatty(STDERR_FILENO) != 1)
+        return true;
     pid_t fg = tcgetpgrp(STDERR_FILENO);
     return fg == -1 || fg == getpgrp();
 }

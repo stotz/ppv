@@ -126,7 +126,8 @@ int main(void)
     ppv_stats_init(&s);
     ppv_stats_add(&s, 1e30);
     ppv_stats_add(&s, -5.0);
-    ppv_stats_add(&s, 0.0 / 0.0);
+    volatile double zero = 0.0; /* runtime NaN: MSVC rejects 0.0 / 0.0 (C2124) */
+    ppv_stats_add(&s, zero / zero);
     EXPECT_TRUE(s.n == 3);
     EXPECT_NEAR(s.min, 0, 1e-9);
     EXPECT_NEAR(s.max, 1e30, 1e20);

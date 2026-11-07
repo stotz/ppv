@@ -20,6 +20,13 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+# Static MSVC runtime. Must be set before the first target is created: the
+# variable only initialises the property of targets defined after it, and a
+# mix of /MT and /MD fails to link (unresolved __imp_* symbols).
+if(MSVC AND PPV_STATIC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # ---------------------------------------------------------------------------
 # Common settings for all targets of this project
 
@@ -75,10 +82,6 @@ target_link_libraries(ppv_core PUBLIC ppv_settings)
 
 # ---------------------------------------------------------------------------
 # Platform layer (the only code that talks to the OS)
-
-if(MSVC AND PPV_STATIC)
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
 
 if(WIN32)
   add_library(ppv_platform STATIC src/platform/win32/platform_win32.c)
