@@ -7,7 +7,7 @@ notes for a release from the matching section of this file.
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-11-07
+## [0.1.0] - 2026-11-09
 
 First release.
 
@@ -21,9 +21,9 @@ First release.
   (`/proc/PID/io` on Linux, `GetProcessIoCounters` on Windows).
 - `-s`: statistics at the end with rate percentiles p10/p25/p50/p75/p90
   (constant-memory log histogram for runs longer than a minute, exact below;
-  printed from 10 samples on), time spent in read vs. in write with their
-  ratio and a `producer-bound` / `consumer-bound` / `balanced` verdict, transfer count and average size,
-  and the transfer method. Exact byte counts are digit-grouped with `_`,
+  printed from 10 samples on), read vs. write time with their ratio and a
+  `producer-bound` / `consumer-bound` / `balanced` verdict, transfer count
+  and average size, and the transfer method. Exact byte counts are digit-grouped with `_`,
   durations below a second are in milliseconds.
 - Options `-q`, `-f`, `-W`, `-i SEC`, `-N NAME`, `-B SIZE`; own parser without a
   getopt dependency.
